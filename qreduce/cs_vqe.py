@@ -134,7 +134,7 @@ class cs_vqe_model:
 
         return outsum
             
-    
+
     def find_noncontextual_ground_state(self):
         """Minimize the function defined in evaluate_classical_obj_fnc
         """
@@ -152,7 +152,19 @@ class cs_vqe_model:
 
         energy, nu, r = sorted(energies, key=lambda x:x[0])[0]
 
-        return energy, nu, r        
+        return energy, nu, r       
+
+    def determine_stabilizer_rotations(self):
+        raise NotImplementedError
+
+    def apply_rotation(op, rot):
+        raise NotImplementedError
+
+    def noncontextual_projection(self,sim_qubits):
+        raise NotImplementedError
+
+    def contextual_subspace_hamiltonian(self, sim_qubits):
+        raise NotImplementedError
 
         
 if __name__ == "__main__":
