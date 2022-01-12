@@ -1,6 +1,6 @@
 import numpy as np
 from copy import deepcopy
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Union
 
 def pauli_to_symplectic(p_str: str) -> np.array:
     """Convert Pauli string to symplectic representation
@@ -177,17 +177,18 @@ def sum_operators(operators:List[Dict[str,float]])->Dict[str,float]:
     return op_out
 
 
-def cleanup_operator(operator:Dict[str,float], threshold:float=1e-15):
+def cleanup_operator(operator:Dict[str,float], threshold:int=15):
     """Drop Pauli terms with negligible coefficients
     """
-    op_out={pauli:coeff for pauli,coeff in operator.items() if abs(coeff)>threshold}
+    op_out={pauli:round(coeff, threshold) for pauli,coeff in operator.items() if abs(coeff)>0.1**threshold}
     
     return op_out
 
 
 def rotate_operator(
                     operator:Dict[str,float], 
-                    rotations:List[Tuple[str,float,bool]]
+                    rotations:List[Tuple[str,float,bool]],
+                    cleanup:bool=True
                     )->Dict[str,float]:
     
     rotated_operator=deepcopy(operator)
@@ -203,9 +204,25 @@ def rotate_operator(
                                                 )
                                 )
         rotated_operator = sum_operators(rotated_paulis)
+    
+    if cleanup:
+        rotated_operator=cleanup_operator(rotated_operator)
+    
+    return rotated_operator
 
-    return cleanup_operator(rotated_operator)
-        
+
+def amend_string_index(string:Union[str,list], index:int, character:str)->str:
+    """Update a string at a given index with some character 
+    """
+    listed = list(deepcopy(string))
+    listed[index] = character
+    return ''.join(listed)
+
+
+def exact_gs_energy(ham:Dict[str, float]):
+    ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in ham.items())
+    gs_energy = sorted(np.linalg.eigh(ham_mat)[0])[0]
+    return gs_energy
 
 
 
