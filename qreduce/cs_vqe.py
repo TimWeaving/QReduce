@@ -1,7 +1,7 @@
-import utils
-from cs_vqe_tools_legacy import apply_rotation, greedy_dfs
-from tapering import gf2_gaus_elim
-from itertools import combinations, product
+import qreduce.utils as utils
+from qreduce.cs_vqe_tools_legacy import apply_rotation, greedy_dfs
+from qreduce.tapering import gf2_gaus_elim
+from itertools import combinations, product, permutations
 import numpy as np
 from scipy.optimize import minimize_scalar
 from typing import Dict, List, Tuple
@@ -25,8 +25,13 @@ class cs_vqe_model:
         self.ham_noncontextual = {op:coeff for op,coeff in self.ham.items() if op in self.noncontextual_set}
         self.ham_contextual = {op:coeff for op,coeff in self.ham.items() if op not in self.noncontextual_set}
         self.symmetry, self.cliques = self.decompose_noncontextual_set()
-        self.generators = self.find_symmetry_generators()
         self.cliquereps = self.choose_clique_representatives()
+        for op in self.cliquereps:
+            X_index = op.find('X')
+            if X_index != -1:
+                self.anti_clique_qubit=X_index
+        
+        self.generators, self.Z_indices = self.find_symmetry_generators()
         self.objfncprms = self.classical_obj_fnc_params(
             G=self.generators, C=self.cliquereps
         )
@@ -39,6 +44,8 @@ class cs_vqe_model:
         Q, t = self.unitary_partitioning_rotation()
         self.unitary_partitioning = (Q, t, False)
         self.stabilizer_rotations = self.generator_rotations()
+        print(self.stabilizer_rotations)
+
         for i, rot_data in self.stabilizer_rotations.items():
             if rot_data['symmetry']==False:
                 self.anti_clique_qubit = i
@@ -86,18 +93,6 @@ class cs_vqe_model:
 
         return symmetry, cliques
 
-    def find_symmetry_generators(self):
-        """Find independent generating set for noncontextual symmetry via Gaussian elimination
-        """
-        symmetry_matrix = utils.build_symplectic_matrix(self.symmetry)
-        sym_row_reduced = gf2_gaus_elim(symmetry_matrix)
-        sym_row_reduced = sym_row_reduced[
-            ~np.all(sym_row_reduced == 0, axis=1)
-        ]  # remove zero rows
-        generators = [utils.pauli_from_symplectic(p) for p in sym_row_reduced]
-
-        return generators
-
     def choose_clique_representatives(self):
         """Choose an operator from each of the cliques determined in decompose_noncontextual_set
         to complete the generating set and forms the observable C(r)
@@ -105,12 +100,49 @@ class cs_vqe_model:
         clique_reps = []
         # choose the operator in each clique which is identity on the most qubit positions
         # to choose the single pauli Z where possible
+        # ACTUALLY...
+        # perhaps best to choose representatives with minimal identity qubits...
+        # results in more rotations but each qubit position effectively encodes 'more information'
+        # about the collective Hamiltonian... results in chemical accuracy being achieved faster
         for clique in self.cliques:
             op_weights = [(op, op.count("I")) for op in clique]
-            op_weights = sorted(op_weights, key=lambda x: -x[1])
+            op_weights = sorted(op_weights, key=lambda x: x[1])
             clique_reps.append(op_weights[0][0])
 
         return clique_reps
+
+    def find_symmetry_generators(self):
+        """Find independent generating set for noncontextual symmetry via Gaussian elimination
+        """
+        A_ij_ops=[]
+        for rep,clique in zip(self.cliquereps,self.cliques):
+            for C in clique:
+                if C!=rep:
+                    A_ij = utils.multiply_paulis(C,rep)
+                    A_ij_ops.append(A_ij)
+        
+        universally_commuting = set(self.symmetry+A_ij_ops)
+        symmetry_matrix = utils.build_symplectic_matrix(universally_commuting)
+
+        sym_row_reduced = gf2_gaus_elim(symmetry_matrix)
+        sym_row_reduced = sym_row_reduced[
+            ~np.all(sym_row_reduced == 0, axis=1)
+        ]  # remove zero rows
+        generators = [utils.pauli_from_symplectic(p) for p in sym_row_reduced]
+        
+        heavy_generators=[]
+        for P in generators:
+            for Q in generators:
+                if P!=Q:
+                    P=utils.multiply_paulis(P,Q)
+            heavy_generators.append(P)
+
+        non_X_qubits = [i for i in range(self.num_qubits) if i!=self.anti_clique_qubit]
+        for Z_indices in permutations(non_X_qubits):
+            if all([G[i]=='Z' for G,i in zip(heavy_generators,Z_indices)]):
+                break
+                    
+        return heavy_generators, Z_indices
 
     def classical_obj_fnc_params(self, G: List[str], C: List[str]):
         """
@@ -222,32 +254,31 @@ class cs_vqe_model:
         """
         clique_rot = utils.rotate_operator(self.anti_clique_operator, [
                                            self.unitary_partitioning])
-        ops_to_rotate = dict(list(self.generator_assignment.items()) + list(clique_rot.items()))
-        single_Z_ops = [G for G in ops_to_rotate.keys() if set(G) == {'I', 'Z'} and G.count('Z') == 1]
-        used_indices = [G.index('Z') for G in single_Z_ops]
+        C_map = {list(clique_rot.keys())[0]:self.anti_clique_qubit}
+        generator_map = {G:i for G,i in zip(self.generators, self.Z_indices)}
+        ops_to_rotate = dict(list(generator_map.items()) + list(C_map.items()))
+        print(ops_to_rotate)
+        #single_Z_ops = [G for G in ops_to_rotate.keys() if set(G) == {'I', 'Z'} and G.count('Z') == 1]
+        #used_indices = [G.index('Z') for G in single_Z_ops]
         rotations = {i: {'generator': None, 'symmetry': True,
                          'rotation': []} for i in range(self.num_qubits)}
         
         for G in ops_to_rotate:
-            if G in single_Z_ops:
-                rotations[G.find('Z')]['generator'] = G
+            Z_index = ops_to_rotate[G]
+
+            if G.count('Z') == 1:
+                rotations[Z_index]['generator'] = G
                 if G in clique_rot:
-                    rotations[G.find('Z')]['symmetry'] = False
-                    rotations[G.find('Z')]['rotation'].append(self.unitary_partitioning)
+                    rotations[Z_index]['symmetry'] = False
+                    rotations[Z_index]['rotation'].append(self.unitary_partitioning)
             else:
                 if set(G) in [{'I', 'Z'}, {'Z'}]:
-                    Z_indices = [i for i in range(
-                        self.num_qubits) if G[i] == 'Z']
-                    available = list(set(Z_indices)-set(used_indices))
-                    Z_index = available[0]
                     rot_op = utils.amend_string_index(['I' for i in range(self.num_qubits)],Z_index,'Y')
                     rotations[Z_index]['rotation'].append(
                         (rot_op, np.pi/2, True))
                     G_offdiag = utils.amend_string_index(G,Z_index,'X')
                 else:
                     G_offdiag = deepcopy(G)
-                    Z_index = [i for i in range(self.num_qubits) if G_offdiag[i] in [
-                        'X', 'Y'] and i not in used_indices][0]
 
                 rotations[Z_index]['generator'] = G
                 if G_offdiag[Z_index] == 'X':
@@ -260,8 +291,6 @@ class cs_vqe_model:
                     rotations[Z_index]['rotation'].insert(
                         0, self.unitary_partitioning)
                     rotations[Z_index]['symmetry'] = False
-
-                used_indices.append(Z_index)
 
         return rotations
 
@@ -278,10 +307,15 @@ class cs_vqe_model:
         all_rotations = []
         for i in rot_order:
             all_rotations += self.stabilizer_rotations[i]['rotation']
+        print(all_rotations)
 
         # perform rotation
         stabilizers = utils.rotate_operator(
             unrotated_generators, all_rotations)
+
+        for stab,eigval in stabilizers.items():
+            self.stabilizer_rotations[stab.find('Z')]['stabilizer'] = (stab,eigval)
+        
         stabilizer_eigenvals = {stab.find('Z'): int(
             eigval) for stab, eigval in stabilizers.items()}
         
@@ -297,6 +331,10 @@ class cs_vqe_model:
         """ method for projecting an operator over fixed qubit positions
         stabilized by single Pauli Z operators (obtained via Clifford operations)
         """
+        # qubits for projection must be ordered
+        project_qubits = sorted(project_qubits)
+        #num_proj_q = len(project_qubits)
+        #single_Z_ops = [utils.amend_string_index(['I' for j in range(num_proj_q)], i, 'Z') for i in range(num_proj_q)]
         operator_proj = {}
         for pauli in operator:
             pauli_proj = "".join([pauli[i] for i in project_qubits])
@@ -304,7 +342,8 @@ class cs_vqe_model:
                 [pauli[i]
                     for i in range(self.num_qubits) if i not in project_qubits]
             )
-            if set(pauli_proj) in [{"I"}, {"Z"}, {"I", "Z"}]:
+            #commuting = [utils.symplectic_inner_product(pauli_proj,Z)==0 for Z in single_Z_ops]
+            if set(pauli_proj) in [{"I"}, {"Z"}, {"I", "Z"}]: #np.all(commuting):
                 sign = np.prod(
                     [e for e, stab in zip(eigvals, pauli_proj) if stab == "Z"]
                 )
@@ -331,33 +370,33 @@ class cs_vqe_model:
             C_vec = np.array([])
 
         symmetry_stabs_to_project = []
+        symmetry_stabs_nu_project=[]
         stab_rotations = []
         for i in nc_qubits:
             rot_data = self.stabilizer_rotations[i]
             stab_rotations += rot_data['rotation']
             if rot_data['symmetry']:
-                symmetry_stabs_to_project.append(rot_data['generator'])
+                gen,eigval = rot_data['generator']
+                symmetry_stabs_to_project.append(gen)
+                symmetry_stabs_nu_project.append(eigval)
 
         # evaluate updated classical objective function for reduced noncontextual Hamiltonian energy
-        nu = np.array([self.stabilizer_eigenvals[i]
-                      for i in nc_qubits if self.stabilizer_rotations[i]['symmetry']])
         updated_ngs_energy = self.evaluate_classical_obj_fnc(
-            nu, C_vec, G=symmetry_stabs_to_project, C=C_set
+            nu=np.array(symmetry_stabs_nu_project), r=C_vec, G=symmetry_stabs_to_project, C=C_set
         )
 
-        ham_rotated = utils.rotate_operator(self.ham, stab_rotations)#, cleanup=False)
-        ham_contextual_rotated = utils.rotate_operator(self.ham_contextual, stab_rotations)#, cleanup=False)
-        #ham_noncontextual_rotated = utils.rotate_operator(self.ham_noncontextual, stab_rotations, cleanup=False)
+        ham_rotated = utils.rotate_operator(self.ham, stab_rotations, cleanup=False)
+        ham_contextual_rotated = utils.rotate_operator(self.ham_contextual, stab_rotations, cleanup=False)
+        #ham_noncontextual_rotated = utils.rotate_operator(self.ham_noncontextual, stab_rotations, cleanup=True)
 
         operator_to_project = {}
         for op, coeff in ham_rotated.items():
             op_sim = "".join([op[i] for i in cs_qubits])
-            if set(op_sim) in [{"Z"}, {"I", "Z"}] or op in ham_contextual_rotated:
+            if set(op_sim) in [{"Z"},{"I", "Z"}] or op in ham_contextual_rotated:
                 operator_to_project[op] = coeff
         #operator_to_project = utils.sum_operators([operator_to_project, ham_contextual_rotated])
         nc_qubits = sorted(nc_qubits)
-        print(nc_qubits)
-        nu = np.array([self.stabilizer_eigenvals[i] for i in nc_qubits])
+        nu = np.array([self.stabilizer_rotations[i]['stabilizer'][1] for i in nc_qubits])
         ham_cs = self._stabilizer_subspace_projection(
             operator=operator_to_project, project_qubits=nc_qubits, eigvals=nu
         )
@@ -371,35 +410,24 @@ class cs_vqe_model:
 
         return utils.cleanup_operator(ham_cs)
 
+    def contextual_subspace_hamiltonian_2(self, sim_qubits: List[int]):
+        cs_qubits = sim_qubits + self.free_qubits
+        nc_qubits = list(set(range(self.num_qubits)) - set(cs_qubits))
+        nu_proj = np.array([self.stabilizer_rotations[i]['stabilizer'][1] for i in nc_qubits])
 
+        if self.anti_clique_qubit in nc_qubits:
+            # if not simulating anticommuting clique qubit then perform unitary partitioning first
+            nc_qubits.pop(nc_qubits.index(self.anti_clique_qubit))
+            nc_qubits.insert(0, self.anti_clique_qubit)
 
-if __name__ == 'bypass':# "__main__":
-    with open('model_data.json', 'r') as infile:
-        mol_data = json.load(infile)
-    mol=mol_data['HF_STO-3G_SINGLET']
-    ham=mol['ham']
-    set_nc = mol['terms_noncon']
-    n_q=mol['num_qubits']
-    cs_vqe_mol = cs_vqe_model(ham, n_q, set_nc)
-    print(mol['chem_acc_num_q'])
-    print(mol['noncon'])
+        stab_rotations=[]
+        for i in nc_qubits:
+            rot_data = self.stabilizer_rotations[i]
+            stab_rotations += rot_data['rotation']
 
-    print("Generators:", cs_vqe_mol.generators)
-    print("Clique reps:", cs_vqe_mol.cliquereps)
-    print("Noncon nrg:", cs_vqe_mol.ngs_energy)
-    print("G assignment:", cs_vqe_mol.nu)
-    print("r vector:", cs_vqe_mol.r)
-    print("Stabilizers:", cs_vqe_mol.stabilizers)
-    print("Stab qubits:", cs_vqe_mol.stab_qubits)
+        ham_rotated = utils.rotate_operator(self.ham, stab_rotations, cleanup=False)
+        ham_cs = self._stabilizer_subspace_projection(
+            operator=ham_rotated, project_qubits=nc_qubits, eigvals=nu_proj
+        )
 
-    exact = utils.exact_gs_energy(cs_vqe_mol.ham)
-    print('\n exact:',exact)
-    print('Noncon error:', cs_vqe_mol.ngs_energy-exact, '\n')
-    for comb in combinations(range(n_q), 1):
-        comb=list(comb)
-        ham_cs = cs_vqe_mol.contextual_subspace_hamiltonian(comb)
-        #print(ham_cs)
-        cs_energy = utils.exact_gs_energy(ham_cs)
-        print(f'error for qubits {comb}:', cs_energy-exact)
-
-    
+        return utils.cleanup_operator(ham_cs)
