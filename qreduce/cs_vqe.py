@@ -26,6 +26,7 @@ class cs_vqe_model:
         self.ham_contextual = {op:coeff for op,coeff in self.ham.items() if op not in self.noncontextual_set}
         self.symmetry, self.cliques = self.decompose_noncontextual_set()
         self.cliquereps = self.choose_clique_representatives()
+        
         for op in self.cliquereps:
             X_index = op.find('X')
             if X_index != -1:
@@ -36,17 +37,15 @@ class cs_vqe_model:
             G=self.generators, C=self.cliquereps
         )
         self.ngs_energy, self.nu, self.r = self.find_noncontextual_ground_state()
-        # self.stabilizer_rotations = self.determine_stabilizer_rotations()
         self.generator_assignment = {G: eig for G,
                                      eig in zip(self.generators, self.nu)}
         self.anti_clique_operator = {C: val for C,
                                      val in zip(self.cliquereps, self.r)}
         Q, t = self.unitary_partitioning_rotation()
         self.unitary_partitioning = (Q, t, False)
-        self.stabilizer_rotations = self.generator_rotations()
-        print(self.stabilizer_rotations)
+        self.stabilizer_map = self.generator_rotations()
 
-        for i, rot_data in self.stabilizer_rotations.items():
+        for i, rot_data in self.stabilizer_map.items():
             if rot_data['symmetry']==False:
                 self.anti_clique_qubit = i
         (
@@ -252,69 +251,73 @@ class cs_vqe_model:
         Returns dictionary where keys represent qubit positions and values are lists of rotations of the form
         (rotation, angle, gen_rot) to rotate stabilizers to single Pauli Z supported by the corresponding qubit
         """
+        used_qubits = []
         clique_rot = utils.rotate_operator(self.anti_clique_operator, [
-                                           self.unitary_partitioning])
-        C_map = {list(clique_rot.keys())[0]:self.anti_clique_qubit}
-        generator_map = {G:i for G,i in zip(self.generators, self.Z_indices)}
-        ops_to_rotate = dict(list(generator_map.items()) + list(C_map.items()))
-        print(ops_to_rotate)
-        #single_Z_ops = [G for G in ops_to_rotate.keys() if set(G) == {'I', 'Z'} and G.count('Z') == 1]
-        #used_indices = [G.index('Z') for G in single_Z_ops]
-        rotations = {i: {'generator': None, 'symmetry': True,
-                         'rotation': []} for i in range(self.num_qubits)}
+                                                self.unitary_partitioning])
+        stabilizer_map = {i: {'generator': None, 'symmetry': True,
+                                'rotation': []} for i in range(self.num_qubits)}
+        ops_to_rotate = list(clique_rot.keys())+self.generators
         
+        rotations=[]
         for G in ops_to_rotate:
-            Z_index = ops_to_rotate[G]
+            G_rot = list(utils.rotate_operator({G:1}, rotations).keys())[0]
 
-            if G.count('Z') == 1:
-                rotations[Z_index]['generator'] = G
-                if G in clique_rot:
+            if G_rot.count('Z')==1:
+                used_qubits.append(G_rot.index('Z'))
+                if G_rot in clique_rot:
                     rotations[Z_index]['symmetry'] = False
                     rotations[Z_index]['rotation'].append(self.unitary_partitioning)
             else:
-                if set(G) in [{'I', 'Z'}, {'Z'}]:
+                if set(G_rot) in [{'Z'},{'I','Z'}]:
+                    Z_indices = [i for i in range(self.num_qubits) if G_rot[i]=='Z' and i not in used_qubits]
+                    if G in clique_rot:
+                        Z_index = self.anti_clique_qubit
+                    else:
+                        Z_index = Z_indices[0]
                     rot_op = utils.amend_string_index(['I' for i in range(self.num_qubits)],Z_index,'Y')
-                    rotations[Z_index]['rotation'].append(
-                        (rot_op, np.pi/2, True))
-                    G_offdiag = utils.amend_string_index(G,Z_index,'X')
+                    stabilizer_map[Z_index]['rotation'].append((rot_op, np.pi/2, True))
+                    rotations.append((rot_op, np.pi/2, True))
+                    G_offdiag = utils.amend_string_index(G_rot,Z_index,'X')
                 else:
-                    G_offdiag = deepcopy(G)
-
-                rotations[Z_index]['generator'] = G
+                    G_offdiag = deepcopy(G_rot)
+                    Z_index = [i for i in range(self.num_qubits) if G_offdiag[i] in [
+                                'X', 'Y'] and i not in used_qubits][0]
+                
+                stabilizer_map[Z_index]['generator'] = G
                 if G_offdiag[Z_index] == 'X':
                     rot_op = utils.amend_string_index(G_offdiag,Z_index,'Y')
                 else:
                     rot_op = utils.amend_string_index(G_offdiag,Z_index,'X')
-                rotations[Z_index]['rotation'].append((rot_op, np.pi/2, True))
-
+                stabilizer_map[Z_index]['rotation'].append((rot_op, np.pi/2, True))
+                rotations.append((rot_op, np.pi/2, True))
+                
                 if G in clique_rot:
-                    rotations[Z_index]['rotation'].insert(
-                        0, self.unitary_partitioning)
-                    rotations[Z_index]['symmetry'] = False
+                    stabilizer_map[Z_index]['rotation'].insert(0, self.unitary_partitioning)
+                    stabilizer_map[Z_index]['symmetry'] = False
+                    rotations.insert(0,self.unitary_partitioning)
+                    
+            used_qubits.append(Z_index)
 
-        return rotations
+        return stabilizer_map
 
     def single_Z_stabilizers(self):
         """Dictionary of rotated stabilizers and corresponding eigenvalue assignments
         """
         unrotated_generators = dict(list(
             self.generator_assignment.items()) + list(self.anti_clique_operator.items()))
-
         # order rotations so that unitary partitioning performed first
         rot_order=list(range(self.num_qubits))
         rot_order.pop(self.anti_clique_qubit)
         rot_order.insert(0,self.anti_clique_qubit)
         all_rotations = []
         for i in rot_order:
-            all_rotations += self.stabilizer_rotations[i]['rotation']
-        print(all_rotations)
+            all_rotations += self.stabilizer_map[i]['rotation']
 
         # perform rotation
         stabilizers = utils.rotate_operator(
             unrotated_generators, all_rotations)
-
         for stab,eigval in stabilizers.items():
-            self.stabilizer_rotations[stab.find('Z')]['stabilizer'] = (stab,eigval)
+            self.stabilizer_map[stab.find('Z')]['stabilizer'] = (stab,eigval)
         
         stabilizer_eigenvals = {stab.find('Z'): int(
             eigval) for stab, eigval in stabilizers.items()}
@@ -373,7 +376,7 @@ class cs_vqe_model:
         symmetry_stabs_nu_project=[]
         stab_rotations = []
         for i in nc_qubits:
-            rot_data = self.stabilizer_rotations[i]
+            rot_data = self.stabilizer_map[i]
             stab_rotations += rot_data['rotation']
             if rot_data['symmetry']:
                 gen,eigval = rot_data['generator']
@@ -396,7 +399,7 @@ class cs_vqe_model:
                 operator_to_project[op] = coeff
         #operator_to_project = utils.sum_operators([operator_to_project, ham_contextual_rotated])
         nc_qubits = sorted(nc_qubits)
-        nu = np.array([self.stabilizer_rotations[i]['stabilizer'][1] for i in nc_qubits])
+        nu = np.array([self.stabilizer_map[i]['stabilizer'][1] for i in nc_qubits])
         ham_cs = self._stabilizer_subspace_projection(
             operator=operator_to_project, project_qubits=nc_qubits, eigvals=nu
         )
@@ -413,7 +416,7 @@ class cs_vqe_model:
     def contextual_subspace_hamiltonian_2(self, sim_qubits: List[int]):
         cs_qubits = sim_qubits + self.free_qubits
         nc_qubits = list(set(range(self.num_qubits)) - set(cs_qubits))
-        nu_proj = np.array([self.stabilizer_rotations[i]['stabilizer'][1] for i in nc_qubits])
+        nu_proj = np.array([self.stabilizer_map[i]['stabilizer'][1] for i in nc_qubits])
 
         if self.anti_clique_qubit in nc_qubits:
             # if not simulating anticommuting clique qubit then perform unitary partitioning first
@@ -422,8 +425,17 @@ class cs_vqe_model:
 
         stab_rotations=[]
         for i in nc_qubits:
-            rot_data = self.stabilizer_rotations[i]
+            rot_data = self.stabilizer_map[i]
             stab_rotations += rot_data['rotation']
+
+        rot_order=list(range(self.num_qubits))
+        rot_order.pop(self.anti_clique_qubit)
+        rot_order.insert(0,self.anti_clique_qubit)
+        all_rotations = []
+        for i in rot_order:
+            all_rotations += self.stabilizer_map[i]['rotation']
+        stab_rotations = all_rotations
+        
 
         ham_rotated = utils.rotate_operator(self.ham, stab_rotations, cleanup=False)
         ham_cs = self._stabilizer_subspace_projection(
