@@ -225,5 +225,15 @@ def exact_gs_energy(ham:Dict[str, float]):
     return gs_energy
 
 
+def number_of_qubits(operator:Dict[str, float]):
+    """ Extract number of qubits from operator in dictionary representation
+    Enforces that each term has same length
+    """
+    qubits_numbers = set([len(pauli) for pauli in operator.keys()])
+    assert(len(qubits_numbers)==1) # each pauli must be same length
+    num_qubits = list(qubits_numbers)[0]
+
+    return num_qubits
+
 
 
