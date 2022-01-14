@@ -1,6 +1,8 @@
 import numpy as np
 from copy import deepcopy
 from typing import List, Dict, Tuple, Union
+from matplotlib import pyplot as plt
+plt.style.use('ggplot')
 
 def pauli_to_symplectic(p_str: str) -> np.array:
     """Convert Pauli string to symplectic representation
@@ -49,7 +51,7 @@ def build_symplectic_matrix(p_list: List[str]) -> np.matrix:
     return sym_mat
 
 
-def symplectic_inner_product(P,Q):
+def symplectic_inner_product(P:str,Q:str) -> int:
     """If 0 is returned then P and Q commute, else they anticommute
     """
     assert(len(P)==len(Q))
@@ -64,7 +66,9 @@ def symplectic_inner_product(P,Q):
     return P_sym@sym_form@Q_sym.T % 2
     
 
-def adjacency_matrix(p_list: List[str], num_qubits: int) -> np.matrix:
+def adjacency_matrix(p_list: List[str], 
+                    num_qubits: int
+                    ) -> np.matrix:
     """Adjacency matrix of pauli list w.r.t. commutation
     if entry i,j == 0 then pauli i and j commute, elif == 1 they anticommute
     """
@@ -77,6 +81,7 @@ def adjacency_matrix(p_list: List[str], num_qubits: int) -> np.matrix:
 
 def multiply_paulis(P: str, Q: str) -> str:
     """Multiply two Pauli strings via their sympletic representation
+    <!> Disregards the coefficient, refer to multiply_paulis_with_coeff if needed
     """
     P_sym = pauli_to_symplectic(P)
     Q_sym = pauli_to_symplectic(Q)
@@ -86,7 +91,8 @@ def multiply_paulis(P: str, Q: str) -> str:
 
 
 def multiply_pauli_list(pauli_list: List[str]) -> str:
-    """Multiply a list of Pauli strings via their sympletic representation
+    """ Multiply a list of Pauli strings via their sympletic representation
+    <!> Disregards the coefficient, refer to multiply_paulis_with_coeff if needed
     """
     pauli_list_sym = [pauli_to_symplectic(P) for P in pauli_list]
     Prod = pauli_from_symplectic(sum(pauli_list_sym)%2)
@@ -94,7 +100,11 @@ def multiply_pauli_list(pauli_list: List[str]) -> str:
     return Prod
 
 
-def multiply_paulis_with_coeff(P,Q):
+def multiply_paulis_with_coeff( P: str,
+                                Q:str
+                                )->Tuple[str, float]:
+    """ Keep track of the coefficient when multiplying pauli operators
+    """
     i_factors=[]
     for p,q in zip(P,Q):
         if p=='X':
@@ -119,7 +129,9 @@ def multiply_paulis_with_coeff(P,Q):
     return PQ, coeff 
 
 
-def pauli_matrix(pauli):
+def pauli_matrix(pauli:str) -> np.array:
+    """ Convert a tensor product of paulis to numpy array
+    """
     num_qubits = len(pauli)
     single_paulis ={'I': np.matrix(np.identity(2)),
                     'X': np.matrix([[0, 1],
@@ -162,7 +174,8 @@ def apply_rotation( P:str,
                     PQ:np.sin(t)*sign*coeff}
 
 
-def sum_operators(operators:List[Dict[str,float]])->Dict[str,float]:
+def sum_operators(operators:List[Dict[str,float]]
+                    )->Dict[str,float]:
     """Take in a list of operators stored as dictionaries and combine
     like-terms to obtain the summed operator
     """
@@ -177,7 +190,9 @@ def sum_operators(operators:List[Dict[str,float]])->Dict[str,float]:
     return op_out
 
 
-def cleanup_operator(operator:Dict[str,float], threshold:int=15):
+def cleanup_operator(operator:Dict[str,float], 
+                    threshold:int=15
+                    ) -> Dict[str, float]:
     """Drop Pauli terms with negligible coefficients
     """
     op_out={pauli:round(coeff, threshold) for pauli,coeff in operator.items() if abs(coeff)>0.1**threshold}
@@ -190,7 +205,12 @@ def rotate_operator(
                     rotations:List[Tuple[str,float,bool]],
                     cleanup:bool=True
                     )->Dict[str,float]:
-    
+    """ Applies a list of rotations of the form (pauli, angle, pi/2_flag)
+    to the input operator. If cleanup is True then terms with negligible
+    coefficients are dropped - this behaviour is not always desirable,
+    for example when rotating an Ansatz operator prior to projection since
+    the coefficients correspond with angles in this case, not Hamiltonian weights.
+    """
     rotated_operator=deepcopy(operator)
     for rot,angle,gen_flag in rotations:
         rotated_paulis = []
@@ -211,7 +231,9 @@ def rotate_operator(
     return rotated_operator
 
 
-def amend_string_index(string:Union[str,list], index:int, character:str)->str:
+def amend_string_index( string:Union[str,list], 
+                        index:int, character:str
+                        )->str:
     """Update a string at a given index with some character 
     """
     listed = list(deepcopy(string))
@@ -219,13 +241,44 @@ def amend_string_index(string:Union[str,list], index:int, character:str)->str:
     return ''.join(listed)
 
 
-def exact_gs_energy(ham:Dict[str, float]):
-    ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in ham.items())
-    gs_energy = sorted(np.linalg.eigh(ham_mat)[0])[0]
-    return gs_energy
+def exact_gs_energy(operator:Dict[str, float]
+                    ) -> Tuple[float, np.array]:
+    """ Return the ground state energy and corresponding ground state
+    vector for the input operator
+    """
+    ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
+    eigvals, eigvecs = np.linalg.eigh(ham_mat)
+    ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+
+    return ground_energy, np.array(ground_state)
 
 
-def number_of_qubits(operator:Dict[str, float]):
+def plot_ground_state_amplitudes(operator: Dict[str, float], 
+                                num_qubits: int, 
+                                reverse_bitstrings: bool=False
+                                )-> None:
+    """ Prints a barplot of the probability amplitudes for each 
+    basis state in the ground eigenstate of the input operator
+    """
+    cs_energy, cs_vector = exact_gs_energy(operator)
+    bitstrings = [format(index, f'0{num_qubits}b') for index in range(2**(num_qubits))]
+    if reverse_bitstrings:
+        bitstrings.reverse()
+    amps = [(b_str, amp) for b_str,amp 
+            in zip(bitstrings, np.square(abs(cs_vector)[0])) if amp>1e-10]
+    amps = sorted(amps, key=lambda x:-x[1])
+    X, Y = zip(*amps)
+    
+    # plot and show the amplitudes
+    plt.bar(X, Y)
+    plt.xlabel('Basis state')
+    plt.ylabel('Amplitude in ground state')
+    plt.title(f'Energy = {cs_energy: .10f}')
+    plt.xticks(rotation=90)
+    plt.show()
+    
+
+def number_of_qubits(operator:Dict[str, float]) -> int:
     """ Extract number of qubits from operator in dictionary representation
     Enforces that each term has same length
     """
@@ -234,6 +287,3 @@ def number_of_qubits(operator:Dict[str, float]):
     num_qubits = list(qubits_numbers)[0]
 
     return num_qubits
-
-
-

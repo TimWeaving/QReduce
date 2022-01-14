@@ -1,13 +1,13 @@
 from qreduce.S3_projection import S3_projection
 from qreduce.utils import *
-from qreduce.cs_vqe_tools_legacy import greedy_dfs
+from qreduce.cs_vqe_tools_legacy import greedy_dfs, to_indep_set
 from qreduce.tapering import gf2_gaus_elim
 from itertools import combinations, product
 import numpy as np
 from scipy.optimize import minimize_scalar
 from typing import Dict, List
 
-class cs_vqe_model(S3_projection):
+class cs_vqe(S3_projection):
     """
     """
     def __init__(self,
@@ -95,12 +95,20 @@ class cs_vqe_model(S3_projection):
         # ACTUALLY...
         # perhaps best to choose representatives with minimal identity qubits...
         # results in more rotations but each qubit position effectively encodes 'more information'
-        # about the collective Hamiltonian... results in chemical accuracy being achieved faster
-        for clique in self.cliques:
+        # about the collective Hamiltonian... results in chemical accuracy being achieved faster?
+        
+        offset=3
+        for clique in self.cliques:   
+            # it seems the choice of clique representative
+            # has some bearing on the success of CS-VQE...
+            if all([op.find('X')==-1 for op in clique]):
+                index = offset
+            else:
+                index = -offset
             op_weights = [(op, op.count("I")) for op in clique]
             op_weights = sorted(op_weights, key=lambda x: x[1])
-            clique_reps.append(op_weights[0][0])
-
+            clique_reps.append(op_weights[index][0])
+        
         return clique_reps
 
 
@@ -113,7 +121,7 @@ class cs_vqe_model(S3_projection):
                 if C!=rep:
                     A_ij = multiply_paulis(C,rep)
                     A_ij_ops.append(A_ij)
-        
+
         universally_commuting = set(self.symmetry+A_ij_ops)
         symmetry_matrix = build_symplectic_matrix(universally_commuting)
 
@@ -129,6 +137,9 @@ class cs_vqe_model(S3_projection):
                 if P!=Q:
                     P=multiply_paulis(P,Q)
             heavy_generators.append(P)
+
+        #heavy_generators, reconstruction = to_indep_set({op:[1] for op in universally_commuting})
+        #heavy_generators = [G[0] for G in heavy_generators]
 
         return heavy_generators
 
@@ -239,24 +250,60 @@ class cs_vqe_model(S3_projection):
 
         return Q, t
 
+
+    def noncontextual_ground_state(self, stabilizer_indices):
+        simulated_indices = list(set(range(len(self.generators)))-set(stabilizer_indices))
+        stabilizers = [self.generators[i] for i in simulated_indices]
+        #eigenvalues = [self.nu[i] for i in simulated_indices]
+
+        super().__init__(operator   = self.hamiltonian, 
+                        stabilizers = self.generators, 
+                        eigenvalues = self.nu, 
+                        single_pauli= self.single_pauli)
+
+        all_rotations, stabilizer_map = self.stabilizer_rotations()
+        for stab in stabilizers:
+            print(stab, stabilizer_map[stab])
+
+        
     
-    def contextual_subspace_hamiltonian(self, stabilizer_indices:List[int]) -> Dict[str, float]:
-        """ Returns the contextual subspace Hamiltonian defined by a projection over
-        stabilizers corresponing with stabilizer_indices
+    def _contextual_subspace_projection(self,   
+                                        operator:Dict[str,float],
+                                        stabilizer_indices:List[int]
+                                        ) -> Dict[str, float]:
+        """ Returns the restriction of an operator to the contextual subspace 
+        defined by a projection over stabilizers corresponing with stabilizer_indices
         """
         stabilizers = [self.generators[i] for i in stabilizer_indices]
         eigenvalues = [self.nu[i] for i in stabilizer_indices]
-        
+
         # Now invoke the stabilizer subspace projection class methods given the chosen
         # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
-        super().__init__(self.hamiltonian, stabilizers, eigenvalues, self.single_pauli)
-        
+        super().__init__(operator   = operator, 
+                        stabilizers = stabilizers, 
+                        eigenvalues = eigenvalues, 
+                        single_pauli= self.single_pauli)
+
         if 0 in stabilizer_indices:
             # Note element 0 is always the anticommuting clique operator, hence in this case
             # we need to insert the unitary partitioning rotations before applying the
             # remaining stabilizer rotations determined by S3_projection
-            return self.perform_projection(insert_rotation = self.unitary_partitioning)
+            ham_cs = self.perform_projection(insert_rotation = self.unitary_partitioning)
         else:
-            return self.perform_projection()
+            ham_cs = self.perform_projection()
+
+        return ham_cs
+
+
+    def contextual_subspace_hamiltonian(self,
+                                        stabilizer_indices:List[int]
+                                        ) -> Dict[str,float]:
+        """ Construct and return the CS-VQE Hamiltonian for the stabilizers
+        corresponding with stabilizer_indices
+        """
+        return self._contextual_subspace_projection(operator=self.hamiltonian,
+                                                    stabilizer_indices=stabilizer_indices)
+        
+        
 
 

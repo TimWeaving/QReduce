@@ -1,21 +1,30 @@
 from qreduce.utils import *
+from qreduce.tapering import gf2_gaus_elim
 from typing import Dict, List, Tuple
 from copy import deepcopy
 
+
 class S3_projection:
     def __init__(self, 
-                hamiltonian: Dict[str, float],
+                operator: Dict[str, float],
                 stabilizers: List[str], 
                 eigenvalues: List[int],
-                single_pauli: str
+                single_pauli: str,
+                used_qubits: List[int] = []
                 ) -> None:
         """
         """
-        self.hamiltonian = hamiltonian
-        self.num_qubits  = number_of_qubits(hamiltonian)
+        self.operator = operator
+        self.num_qubits  = number_of_qubits(operator)
+        # check the stabilizers are independent:
+        check_independent = gf2_gaus_elim(build_symplectic_matrix(stabilizers))
+        for row in check_independent:
+            if np.all(row==0):
+                raise ValueError('The supplied stabilizers are not independent')
         self.stabilizers = stabilizers
         self.eigenvalues = eigenvalues
         self.single_pauli = single_pauli
+        self.used_qubits = used_qubits
 
 
     def stabilizer_rotations(self):
@@ -33,7 +42,7 @@ class S3_projection:
         single_pauli_map = {'X':{1:'Z', 2:'Y'},
                             'Y':{1:'X', 2:'Z'},
                             'Z':{1:'Y', 2:'X'}}
-        used_qubits = []
+        used_qubits = deepcopy(self.used_qubits)
         all_rotations=[]
 
         for S in self.stabilizers:
@@ -130,7 +139,7 @@ class S3_projection:
         free_q = list(set(range(self.num_qubits))-set(stab_q))
         sector = [S_data['eigenvalue'] for S_data in stabilizer_map.values()]
 
-        ham_rotated = rotate_operator(self.hamiltonian, all_rotations, cleanup=False)
+        ham_rotated = rotate_operator(self.operator, all_rotations, cleanup=False)
         ham_project = self._perform_projection(
             operator=ham_rotated, stab_q=stab_q, sector=sector)
 
