@@ -241,12 +241,20 @@ class cs_vqe_model(S3_projection):
 
     
     def contextual_subspace_hamiltonian(self, stabilizer_indices:List[int]) -> Dict[str, float]:
-        """
+        """ Returns the contextual subspace Hamiltonian defined by a projection over
+        stabilizers corresponing with stabilizer_indices
         """
         stabilizers = [self.generators[i] for i in stabilizer_indices]
         eigenvalues = [self.nu[i] for i in stabilizer_indices]
+        
+        # Now invoke the stabilizer subspace projection class methods given the chosen
+        # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
         super().__init__(self.hamiltonian, stabilizers, eigenvalues, self.single_pauli)
+        
         if 0 in stabilizer_indices:
+            # Note element 0 is always the anticommuting clique operator, hence in this case
+            # we need to insert the unitary partitioning rotations before applying the
+            # remaining stabilizer rotations determined by S3_projection
             return self.perform_projection(insert_rotation = self.unitary_partitioning)
         else:
             return self.perform_projection()
