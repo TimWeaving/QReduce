@@ -18,5 +18,5 @@ This facilitates implementations of the following:
     - Here, the stabilizers are taken to be an independent generating set of a sub-Hamiltonian symmetry (defined by a noncontextual subset of terms) with an additional contribution encapsulating the remaining anticommuting terms therein.
     - In order to deploy CS-VQE on legitimate quantum hardware, we additionally apply the stabilizer subspace projection to an Ansatz defined on the full system so that it is consistent with our CS-VQE Hamiltonians.
  
-In principle, one may define their own stabilizer subspace selection procedure and effect the corresponding projection via S3_projection, although there is no guarantee that the resulting Hamiltonian will preserve sufficient information of the target system to yield reasonable energies.
+One may define their own stabilizer selection procedure and effect the corresponding projection via S3_projection, although care must be taken to ensure the resulting Hamiltonians preserve sufficient information of the target system to yield reasonable energies (i.e. to within chemical accuracy for simulating molecular systems).
 

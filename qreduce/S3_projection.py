@@ -1,21 +1,32 @@
 from qreduce.utils import *
+from qreduce.tapering import gf2_gaus_elim
 from typing import Dict, List, Tuple
 from copy import deepcopy
 
+
 class S3_projection:
     def __init__(self, 
-                hamiltonian: Dict[str, float],
+                operator: Dict[str, float],
                 stabilizers: List[str], 
                 eigenvalues: List[int],
-                single_pauli: str
+                single_pauli: str,
+                used_qubits: List[int] = [],
+                proj_qubits: List[int] = None
                 ) -> None:
         """
         """
-        self.hamiltonian = hamiltonian
-        self.num_qubits  = number_of_qubits(hamiltonian)
+        self.operator = operator
+        self.num_qubits  = number_of_qubits(operator)
+        # check the stabilizers are independent:
+        check_independent = gf2_gaus_elim(build_symplectic_matrix(stabilizers))
+        for row in check_independent:
+            if np.all(row==0):
+                raise ValueError('The supplied stabilizers are not independent')
         self.stabilizers = stabilizers
         self.eigenvalues = eigenvalues
-        self.single_pauli = single_pauli
+        self.single_pauli= single_pauli
+        self.used_qubits = used_qubits
+        self.proj_qubits = proj_qubits
 
 
     def stabilizer_rotations(self):
@@ -33,7 +44,7 @@ class S3_projection:
         single_pauli_map = {'X':{1:'Z', 2:'Y'},
                             'Y':{1:'X', 2:'Z'},
                             'Z':{1:'Y', 2:'X'}}
-        used_qubits = []
+        used_qubits = deepcopy(self.used_qubits)
         all_rotations=[]
 
         for S in self.stabilizers:
@@ -91,16 +102,14 @@ class S3_projection:
 
 
     def _perform_projection(self, 
-                        operator: Dict[str, float], 
-                        stab_q: List[int], 
-                        sector: List[int],
+                        operator: Dict[str, float],  
+                        q_sector: Dict[int, int],
                         ) -> Dict[str, float]:
         """ method for projecting an operator over fixed qubit positions
         stabilized by single Pauli operators (obtained via Clifford operations)
         """
         # qubits for projection must be ordered
-        stab_q = sorted(stab_q)
-        
+        stab_q, sector = zip(*sorted(q_sector.items(), key=lambda x:x[0]))
         operator_proj = {}
         for pauli in operator:
             pauli_stab = "".join([pauli[i] for i in stab_q])
@@ -125,13 +134,20 @@ class S3_projection:
         all_rotations, stabilizer_map = self.stabilizer_rotations()
         if insert_rotation is not None:
             all_rotations.insert(0, insert_rotation)
+        self.all_rotations = all_rotations
 
         stab_q = [S_data['single_pauli_index'] for S_data in stabilizer_map.values()]
-        free_q = list(set(range(self.num_qubits))-set(stab_q))
         sector = [S_data['eigenvalue'] for S_data in stabilizer_map.values()]
+        q_sector = {q:eigval for q,eigval in zip(stab_q, sector)}
 
-        ham_rotated = rotate_operator(self.hamiltonian, all_rotations, cleanup=False)
+        if self.proj_qubits is not None:
+            assert(len(self.proj_qubits) <= len(stab_q))
+            q_sector = {q:q_sector[q] for q in self.proj_qubits}
+
+        free_q = list(set(range(self.num_qubits))-set(stab_q))
+
+        ham_rotated = rotate_operator(self.operator, all_rotations, cleanup=False)
         ham_project = self._perform_projection(
-            operator=ham_rotated, stab_q=stab_q, sector=sector)
+            operator=ham_rotated, q_sector=q_sector)
 
-        return cleanup_operator(ham_project)
+        return ham_project, free_q
