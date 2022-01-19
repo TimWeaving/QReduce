@@ -97,7 +97,7 @@ class cs_vqe(S3_projection):
         # results in more rotations but each qubit position effectively encodes 'more information'
         # about the collective Hamiltonian... results in chemical accuracy being achieved faster?
         
-        offset=3
+        offset=8
         for clique in self.cliques:   
             # it seems the choice of clique representative
             # has some bearing on the success of CS-VQE...
@@ -108,6 +108,8 @@ class cs_vqe(S3_projection):
             op_weights = [(op, op.count("I")) for op in clique]
             op_weights = sorted(op_weights, key=lambda x: x[1])
             clique_reps.append(op_weights[index][0])
+
+        #clique_reps = [self.cliques[0][1], self.cliques[1][7]]
         
         return clique_reps
 
@@ -250,26 +252,11 @@ class cs_vqe(S3_projection):
 
         return Q, t
 
-
-    def noncontextual_ground_state(self, stabilizer_indices):
-        simulated_indices = list(set(range(len(self.generators)))-set(stabilizer_indices))
-        stabilizers = [self.generators[i] for i in simulated_indices]
-        #eigenvalues = [self.nu[i] for i in simulated_indices]
-
-        super().__init__(operator   = self.hamiltonian, 
-                        stabilizers = self.generators, 
-                        eigenvalues = self.nu, 
-                        single_pauli= self.single_pauli)
-
-        all_rotations, stabilizer_map = self.stabilizer_rotations()
-        for stab in stabilizers:
-            print(stab, stabilizer_map[stab])
-
-        
-    
+          
     def _contextual_subspace_projection(self,   
                                         operator:Dict[str,float],
-                                        stabilizer_indices:List[int]
+                                        stabilizer_indices:List[int] = None,
+                                        projection_qubits: List[int] = None
                                         ) -> Dict[str, float]:
         """ Returns the restriction of an operator to the contextual subspace 
         defined by a projection over stabilizers corresponing with stabilizer_indices
@@ -282,28 +269,51 @@ class cs_vqe(S3_projection):
         super().__init__(operator   = operator, 
                         stabilizers = stabilizers, 
                         eigenvalues = eigenvalues, 
-                        single_pauli= self.single_pauli)
+                        single_pauli= self.single_pauli,
+                        proj_qubits = projection_qubits)
 
         if 0 in stabilizer_indices:
             # Note element 0 is always the anticommuting clique operator, hence in this case
             # we need to insert the unitary partitioning rotations before applying the
             # remaining stabilizer rotations determined by S3_projection
-            ham_cs = self.perform_projection(insert_rotation = self.unitary_partitioning)
+            operator_cs, free_q = self.perform_projection(insert_rotation = self.unitary_partitioning)
         else:
-            ham_cs = self.perform_projection()
+            operator_cs, free_q = self.perform_projection()
 
-        return ham_cs
+        return operator_cs, free_q
 
 
     def contextual_subspace_hamiltonian(self,
-                                        stabilizer_indices:List[int]
+                                        stabilizer_indices:List[int],
+                                        projection_qubits: List[int] = None
                                         ) -> Dict[str,float]:
         """ Construct and return the CS-VQE Hamiltonian for the stabilizers
         corresponding with stabilizer_indices
         """
-        return self._contextual_subspace_projection(operator=self.hamiltonian,
-                                                    stabilizer_indices=stabilizer_indices)
+        ham_cs, free_q = self._contextual_subspace_projection(operator=self.hamiltonian,
+                                                    stabilizer_indices=stabilizer_indices,
+                                                    projection_qubits = projection_qubits)
+
+        return cleanup_operator(ham_cs, threshold=8), free_q
+
+
+    def noncontextual_ground_state(self,
+                                stabilizer_indices:List[int],
+                                projection_qubits: List[int] = None
+                                ) -> str:
+        if projection_qubits is not None:
+            sim_qubits = list(set(range(self.num_qubits))-set(projection_qubits))
+        ham_cs, free_q = self.contextual_subspace_hamiltonian(stabilizer_indices=stabilizer_indices, projection_qubits=projection_qubits)
+        all_generators = {G:eigval for G, eigval in zip(self.generators, self.nu)}
+        rotate_gen = rotate_operator(operator=all_generators, rotations=self.all_rotations, cleanup=True)
+        stabilizers = {G:int(eig) for G,eig in cleanup_operator(rotate_gen, threshold=5).items()}
+        poss_eigenstates = simultaneous_eigenstates(stabilizers)
+        reduced_eigenstates = [''.join([state[i] for i in free_q]) for state in poss_eigenstates]
         
+        if len(reduced_eigenstates)>1:
+            print('Multiple eigenstates found:', reduced_eigenstates)
+        
+        return reduced_eigenstates[0]
         
 
 

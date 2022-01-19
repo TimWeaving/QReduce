@@ -2,6 +2,7 @@ import numpy as np
 from copy import deepcopy
 from typing import List, Dict, Tuple, Union
 from matplotlib import pyplot as plt
+from itertools import permutations, product, combinations
 plt.style.use('ggplot')
 
 def pauli_to_symplectic(p_str: str) -> np.array:
@@ -287,3 +288,40 @@ def number_of_qubits(operator:Dict[str, float]) -> int:
     num_qubits = list(qubits_numbers)[0]
 
     return num_qubits
+
+
+def simultaneous_eigenstates(stabilizers: Dict[str,float])->List[str]:
+    """
+    """
+    all_eigenstates = {}
+
+    for op,eigval in stabilizers.items():
+
+        parity = (1-eigval)//2
+        num_Z = op.count('Z')
+        possible_states = []
+
+        for i in range((num_Z)//2+1):
+            num_1 = 2*i + parity
+            if num_1<=num_Z:
+                I_indices = [i for i,P in enumerate(op) if P=='I']
+                Z_indices = [i for i,P in enumerate(op) if P=='Z']
+
+                init_state = ['1' for i in range(num_1)]+['0' for i in range(num_Z-num_1)]
+                Z_bit_vals = list(set(permutations(init_state)))
+                I_bit_vals = list(product(['0', '1'], repeat=op.count('I')))
+
+                for Z_bits in Z_bit_vals:
+                    Z_bits_indexed = list(zip(Z_bits, Z_indices))
+                    for I_bits in I_bit_vals:
+                        I_bits_indexed = list(zip(I_bits, I_indices))
+                        ordered_eigenstring = sorted(Z_bits_indexed+I_bits_indexed, key=lambda x:x[1])
+                        eigenstring = ''.join([bit[0] for bit in ordered_eigenstring])
+                        possible_states.append(eigenstring)
+
+                all_eigenstates[op] = possible_states
+
+    list_eigenstates = list(all_eigenstates.values())
+    intersection = set(list_eigenstates[0]).intersection(*list_eigenstates)
+    
+    return list(intersection)
