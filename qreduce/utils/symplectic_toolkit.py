@@ -110,3 +110,31 @@ def adjacency_matrix(p_list: List[str],
     sym_form = np.array(half_sym_form + half_sym_form.T, dtype=int)
     
     return sym_mat@sym_form@sym_mat.T % 2
+
+
+def cleanup_symplectic(terms, coeff):    
+    """ Remove duplicated rows of symplectic matrix terms, whilst summing the corresponding
+    coefficients of the deleted rows in coeff
+    """ 
+    # order the pauli terms
+    sort_order = np.lexsort(terms.T)
+    sorted_terms = terms[sort_order,:]
+    sorted_coeff = coeff[sort_order,:]
+    
+    # take difference between adjacent terms and drop 0 rows (duplicates)
+    row_mask = np.append([True],np.any(np.diff(sorted_terms,axis=0),1))
+    out_terms = sorted_terms[row_mask]
+    
+    # sum coefficients of like-terms
+    #if row_mask[-1] == False:
+    row_mask = np.append(row_mask, True)
+    mask_indices = np.where(row_mask==True)[0]
+    mask_diff = np.diff(mask_indices)
+    out_coeff = []
+    for i, d in zip(mask_indices, mask_diff):
+        dup_term_sum = np.sum([sorted_coeff[i+j] for j in range(d)])
+        out_coeff.append([dup_term_sum])
+        
+    out_coeff = np.stack(out_coeff)
+    
+    return out_terms,  out_coeff

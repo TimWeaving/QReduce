@@ -1,5 +1,5 @@
-from qreduce.utils import *
-from qreduce.tapering import gf2_gaus_elim
+from qreduce.utils.operator_toolkit import *
+from qreduce.utils.tapering import gf2_gaus_elim
 from typing import Dict, List, Tuple
 from copy import deepcopy
 

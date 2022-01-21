@@ -1,7 +1,8 @@
 from qreduce.S3_projection import S3_projection
-from qreduce.utils import *
-from qreduce.cs_vqe_tools_legacy import greedy_dfs, to_indep_set
-from qreduce.tapering import gf2_gaus_elim
+from qreduce.utils.operator_toolkit import *
+from qreduce.utils.symplectic_toolkit import *
+from qreduce.utils.cs_vqe_tools_legacy import greedy_dfs, to_indep_set
+from qreduce.utils.tapering import gf2_gaus_elim
 from itertools import combinations, product
 import numpy as np
 from scipy.optimize import minimize_scalar

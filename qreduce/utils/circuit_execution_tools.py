@@ -9,7 +9,7 @@ from qiskit.test.mock import FakeVigo, FakeTenerife, FakeMelbourne, FakeRueschli
 from qiskit.ignis.mitigation.measurement import CompleteMeasFitter, TensoredMeasFitter
 from qiskit.algorithms import VQE
 from qiskit_nature.runtime import VQEProgram
-import qreduce.qonversion_tools as qonvert
+import qreduce.utils.qonversion_tools as qonvert
 from qiskit.algorithms.optimizers import COBYLA, IMFIL
 #from cs_vqe.circuit import cs_vqe_circuit
 

@@ -3,7 +3,7 @@ from copy import deepcopy
 from typing import List, Dict, Tuple, Union
 from matplotlib import pyplot as plt
 from itertools import permutations, product, combinations
-from utils.symplectic_toolkit import *
+from qreduce.utils.symplectic_toolkit import *
 plt.style.use('ggplot')
 
 
@@ -13,8 +13,9 @@ def multiply_paulis(P: str, Q: str) -> str:
     """
     P_sym = pauli_to_symplectic(P)
     Q_sym = pauli_to_symplectic(Q)
-    PQ = pauli_from_symplectic((P_sym+Q_sym)%2)
-
+    PQ_sym = (P_sym+Q_sym)%2
+    PQ = pauli_from_symplectic(PQ_sym[0])
+    
     return PQ
 
 
@@ -23,7 +24,7 @@ def multiply_pauli_list(pauli_list: List[str]) -> str:
     <!> Disregards the coefficient, refer to multiply_paulis_with_coeff if needed
     """
     pauli_list_sym = [pauli_to_symplectic(P) for P in pauli_list]
-    Prod = pauli_from_symplectic(sum(pauli_list_sym)%2)
+    Prod = pauli_from_symplectic((sum(pauli_list_sym)%2)[0])
 
     return Prod
 
