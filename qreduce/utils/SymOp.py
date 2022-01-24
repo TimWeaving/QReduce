@@ -1,7 +1,16 @@
-from cmath import phase
 from qreduce.utils.symplectic_toolkit import *
 
-class SymOp:
+class operator:
+
+    pauli_map = {   
+        'II':[1,   'I'],
+        'XX':[1,   'I'],'YY':[1,   'I'],'ZZ':[1,   'I'], 
+        'IX':[1,   'X'],'IY':[1,   'Y'],'IZ':[1,   'Z'],
+        'XI':[1,   'X'],'YI':[1,   'Y'],'ZI':[1,   'Z'],
+        'XY':[+1j, 'Z'],'ZX':[+1j, 'Y'],'YZ':[+1j, 'X'],
+        'YX':[-1j, 'Z'],'XZ':[-1j, 'Y'],'ZY':[-1j, 'X']
+        }
+
     phase_matrix = np.array(
         [
             [1,  1,  1,   1 ],
@@ -93,24 +102,17 @@ class SymOp:
         coeffs = self.cfvec * phases
 
         op_out = dictionary_operator(opmult, coeffs)
+        return operator(op_out)
 
-        return SymOp(op_out)
 
-
-    def rotate_by(self, 
-                P:str, 
-                clifford:bool=True, 
-                angle:float=None
-                ):
-        """ Let R = e^(i t/2 P)... this method returns R H R^\dag
-        angle = pi/2 for R to be a Clifford operations
-        """
-        assert(len(P) == self.n_qbits)
-        #if on not in ['left', 'right']:
-        #    raise ValueError('Accepted values for argument on are left or right')
+    def _symplectic_rotation(self, 
+                            P:str, 
+                            clifford:bool=True, 
+                            angle:float=None
+                            )->Dict[str, float]:
 
         P_symp = pauli_to_symplectic(P)
-        commuting = (self._symp @ self.symform @ P_symp.T) % 2
+        commuting = self.commuting(P) #(self._symp @ self.symform @ P_symp.T) % 2
 
         I = np.eye(2*self.n_qbits, 2*self.n_qbits)
         OmegaPtxP = np.outer(self.symform @ P_symp.T, P_symp)
@@ -140,6 +142,80 @@ class SymOp:
             non_cliff_cf = np.concatenate((sin_cf_part, cos_cf_part))
             non_cliff_op, non_cliff_cf = cleanup_symplectic(non_cliff_op, non_cliff_cf)
 
-            op_out = dictionary_operator(non_cliff_op, non_cliff_cf)
+        op_out = dictionary_operator(non_cliff_op, non_cliff_cf)
+        return op_out
 
-        return SymOp(op_out)
+
+    def _dictionary_rotation(self, 
+                            pauli_rot:str, 
+                            clifford:bool=True, 
+                            angle:float=None
+                            )->Dict[str, float]:
+
+        ## determine possible Paulis in image to avoid if statements
+        #pauli_rot_symp = pauli_to_symplectic(pauli_rot)
+        #I = np.eye(2*self.n_qbits, 2*self.n_qbits)
+        #OmegaPtxP = np.outer(self.symform @ pauli_rot_symp.T, pauli_rot_symp)
+        #P_mult_mat = (I+OmegaPtxP) % 2
+        ## determine Pauli terms
+        #RQRt = (self._symp @ P_mult_mat) % 2
+        #poss_ops = np.concatenate((self._symp, RQRt))
+        #poss_ops = dictionary_operator(
+        #                                poss_ops, 
+        #                                np.array([[0] for i in range(len(poss_ops))])
+        #                                )
+        def update_op(op, P, c):
+            if P not in op:
+                op[P] = c.real
+            else:
+                op[P] += c.real
+
+        def commutes(P, Q):
+            num_diff=0
+            for Pi,Qi in zip(P,Q):
+                if Pi=='I' or Qi=='I':
+                    pass
+                else:
+                    if Pi!=Qi:
+                        num_diff+=1
+            return not bool(num_diff%2)
+
+        op_out = {}
+        #commuting = list(self.commuting(pauli_rot).T[0]==0)
+        for (pauli,coeff) in self._dict.items():#,commutes in zip(self._dict.items(), commuting):
+            if commutes(pauli, pauli_rot):#commutes:
+                update_op(op=op_out, P=pauli, c=coeff)
+            else:
+                phases, paulis = zip(*[self.pauli_map[P+Q] for P,Q in zip(pauli_rot, pauli)])
+                coeff_update = coeff*1j*np.prod(phases)
+                if clifford:
+                    update_op(op=op_out, P=''.join(paulis), c=coeff_update)
+                else:
+                    update_op(op=op_out, P=pauli, c=np.cos(angle)*coeff)
+                    update_op(op=op_out, P=''.join(paulis), c=np.sin(angle)*coeff_update)
+                
+        return op_out
+
+
+    def rotate_by(self, 
+                P:str, 
+                clifford:bool=True, 
+                angle:float=None,
+                rot_type:str='dict'
+                ):
+        """ Let R = e^(i t/2 P)... this method returns R H R^\dag
+        angle = pi/2 for R to be a Clifford operations
+        """
+
+        if rot_type not in ['dict', 'symp']:
+            raise ValueError('Accepted values for rot_type are dict and symp')
+        assert(len(P) == self.n_qbits)
+
+        if rot_type == 'symp':
+            rotated_op = self._symplectic_rotation(P,clifford,angle)
+        elif rot_type == 'dict':
+            rotated_op = self._dictionary_rotation(P,clifford,angle)
+
+        return operator(rotated_op)
+
+        
