@@ -2,8 +2,10 @@ import numpy as np
 from copy import deepcopy
 from typing import List, Dict, Tuple, Union
 from matplotlib import pyplot as plt
-from itertools import permutations, product, combinations
+from itertools import permutations, product
 from qreduce.utils.symplectic_toolkit import *
+import qreduce.utils.qonversion_tools as qonvert
+from openfermion.linalg import get_sparse_operator,get_ground_state
 plt.style.use('ggplot')
 
 
@@ -170,21 +172,30 @@ def amend_string_index( string:Union[str,list],
     return ''.join(listed)
 
 
-def exact_gs_energy(operator:Dict[str, float]
+def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state
     vector for the input operator
     """
-    ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
-    eigvals, eigvecs = np.linalg.eigh(ham_mat)
-    ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+
+    if matrix_type=='sparse':
+        ham_of = qonvert.dict_to_QubitOperator(operator)
+        ham_sparse = get_sparse_operator(ham_of)
+        ground_energy, ground_state = get_ground_state(ham_sparse)
+    elif matrix_type=='dense':
+        ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
+        eigvals, eigvecs = np.linalg.eigh(ham_mat)
+        ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+    else:
+        raise ValueError('Accepted values for matrix_type are sparse or dense')
 
     return ground_energy, np.array(ground_state)
 
 
 def plot_ground_state_amplitudes(operator: Dict[str, float], 
                                 num_qubits: int, 
-                                reverse_bitstrings: bool=False
+                                reverse_bitstrings: bool=False,
+                                return_amps: bool = False
                                 )-> None:
     """ Prints a barplot of the probability amplitudes for each 
     basis state in the ground eigenstate of the input operator
@@ -194,7 +205,7 @@ def plot_ground_state_amplitudes(operator: Dict[str, float],
     if reverse_bitstrings:
         bitstrings.reverse()
     amps = [(b_str, amp) for b_str,amp 
-            in zip(bitstrings, np.square(abs(cs_vector)[0])) if amp>1e-10]
+            in zip(bitstrings, np.square(abs(cs_vector))) if amp>1e-5]
     amps = sorted(amps, key=lambda x:-x[1])
     X, Y = zip(*amps)
     
@@ -205,6 +216,9 @@ def plot_ground_state_amplitudes(operator: Dict[str, float],
     plt.title(f'Energy = {cs_energy: .10f}')
     plt.xticks(rotation=90)
     plt.show()
+
+    if return_amps:
+        return amps, cs_energy
     
 
 def number_of_qubits(operator:Dict[str, float]) -> int:

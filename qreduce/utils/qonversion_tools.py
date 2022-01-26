@@ -1,15 +1,13 @@
 from openfermion.ops import QubitOperator
-from qiskit.aqua.operators.legacy import WeightedPauliOperator
+#from qiskit.aqua.operators.legacy import WeightedPauliOperator
 try:
     on_QLM = False
     from qiskit.quantum_info.operators.symplectic.pauli import Pauli
     from qiskit.opflow.primitive_ops import PauliOp
-    print('Will store matrices in sparse form')
 except:
     on_QLM = True
     from qiskit.quantum_info.operators import Pauli
     from qiskit.aqua.operators.primitive_ops.pauli_op import PauliOp
-    print('Will store matrices in dense form')
     
 from openfermion.ops import FermionOperator
 try:
@@ -19,6 +17,7 @@ except:
 
 PAULI_STRINGS_LOOKUP = {'I':0,'X':1,'Y':2,'Z':3}
 PAULI_STRINGS_LOOKUP_REVERSE = {0:'I', 1:'X', 2:'Y', 3:'Z'}
+
 
 # comment out due to incompatible versions of Cirq and OpenFermion in Orquestra
 def QubitOperator_to_dict(op, num_qubits):
@@ -52,11 +51,11 @@ def dict_to_QubitOperator(op):
     return out
 
 
-def WeightedPauliOperator_to_dict(op):
-    assert(type(op) == WeightedPauliOperator)
-    op_dict = {(p[1]).to_label():p[0] for p in op.paulis}
-    
-    return op_dict
+#def WeightedPauliOperator_to_dict(op):
+#    assert(type(op) == WeightedPauliOperator)
+#    op_dict = {(p[1]).to_label():p[0] for p in op.paulis}
+#    
+#    return op_dict
 
 
 def dict_to_WeightedPauliOperator(op):
@@ -77,6 +76,7 @@ def dict_to_list_index(ham_dict):
             new_op.append(PAULI_STRINGS_LOOKUP[i])
         ham_list.append([ham_dict[op], new_op])
     return ham_list
+
 
 def index_list_to_dict(ham_list):
     """ Convert Hamiltonian from list indices to Pauli string dictionary

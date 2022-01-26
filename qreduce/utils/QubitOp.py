@@ -1,6 +1,7 @@
 from qreduce.utils.symplectic_toolkit import *
+from copy import deepcopy
 
-class operator:
+class QubitOp:
 
     pauli_map = {   
         'II':[1,   'I'],
@@ -33,6 +34,18 @@ class operator:
         # Convert operator dictionary to symplectic represention
         self._dict = operator
         self._symp, self.cfvec = symplectic_operator(operator)
+
+
+    def swap_XZ_blocks(self):
+            """ Reverse order of symplectic matrix so that 
+            Z operators are on the left and X on the right
+            """
+            X = self._symp[:,:self.n_qbits]
+            Z = self._symp[:,self.n_qbits:]
+            ZX = np.hstack((Z,X))
+            #swap_op = dictionary_operator(ZX, self.cfvec)
+
+            return ZX # QubitOp(swap_op)
 
 
     def adjacency_matrix(self):
@@ -102,32 +115,33 @@ class operator:
         coeffs = self.cfvec * phases
 
         op_out = dictionary_operator(opmult, coeffs)
-        return operator(op_out)
+
+        return QubitOp(op_out)
 
 
     def _symplectic_rotation(self, 
-                            P:str, 
-                            clifford:bool=True, 
-                            angle:float=None
+                            pauli_rot:str,
+                            angle:float=None,
+                            clifford_flag:bool=True
                             )->Dict[str, float]:
 
-        P_symp = pauli_to_symplectic(P)
-        commuting = self.commuting(P) #(self._symp @ self.symform @ P_symp.T) % 2
+        pauli_rot_symp = pauli_to_symplectic(pauli_rot)
+        commuting = self.commuting(pauli_rot) #(self._symp @ self.symform @ pauli_rot_symp.T) % 2
 
         I = np.eye(2*self.n_qbits, 2*self.n_qbits)
-        OmegaPtxP = np.outer(self.symform @ P_symp.T, P_symp)
-        P_mult_mat = (I+OmegaPtxP) % 2
+        OmegaPtxP = np.outer(self.symform @ pauli_rot_symp.T, pauli_rot_symp)
+        pauli_rot_mult_mat = (I+OmegaPtxP) % 2
         
         # determine Pauli terms
-        RQRt = (self._symp @ P_mult_mat) % 2
+        RQRt = (self._symp @ pauli_rot_mult_mat) % 2
 
         # determine corresponding phase flips
-        phases = self.phases_by_term(P)
+        phases = self.phases_by_term(pauli_rot)
         phases *= 1j # commuting terms now purely imaginary, anticommuting real
-        phase_flip = phases.real + (commuting ^ 1) # +1 whenever term commutes with P, +/-1 rest of time
+        phase_flip = phases.real + (commuting ^ 1) # +1 whenever term commutes with pauli_rot, +/-1 rest of time
         coeff_flip = self.cfvec * phase_flip
 
-        if clifford == True:
+        if clifford_flag == True:
             op_out = dictionary_operator(RQRt, coeff_flip)
         else:
             assert(angle is not None)
@@ -143,13 +157,14 @@ class operator:
             non_cliff_op, non_cliff_cf = cleanup_symplectic(non_cliff_op, non_cliff_cf)
 
         op_out = dictionary_operator(non_cliff_op, non_cliff_cf)
+
         return op_out
 
 
     def _dictionary_rotation(self, 
                             pauli_rot:str, 
-                            clifford:bool=True, 
-                            angle:float=None
+                            angle:float=None,
+                            clifford_flag:bool=True
                             )->Dict[str, float]:
 
         ## determine possible Paulis in image to avoid if statements
@@ -188,7 +203,7 @@ class operator:
             else:
                 phases, paulis = zip(*[self.pauli_map[P+Q] for P,Q in zip(pauli_rot, pauli)])
                 coeff_update = coeff*1j*np.prod(phases)
-                if clifford:
+                if clifford_flag:
                     update_op(op=op_out, P=''.join(paulis), c=coeff_update)
                 else:
                     update_op(op=op_out, P=pauli, c=np.cos(angle)*coeff)
@@ -198,9 +213,9 @@ class operator:
 
 
     def rotate_by(self, 
-                P:str, 
-                clifford:bool=True, 
+                pauli_rot:str,  
                 angle:float=None,
+                clifford_flag:bool=True,
                 rot_type:str='dict'
                 ):
         """ Let R = e^(i t/2 P)... this method returns R H R^\dag
@@ -209,13 +224,25 @@ class operator:
 
         if rot_type not in ['dict', 'symp']:
             raise ValueError('Accepted values for rot_type are dict and symp')
-        assert(len(P) == self.n_qbits)
+        assert(len(pauli_rot) == self.n_qbits)
 
         if rot_type == 'symp':
-            rotated_op = self._symplectic_rotation(P,clifford,angle)
+            rotated_op = self._symplectic_rotation(pauli_rot,angle,clifford_flag,angle)
         elif rot_type == 'dict':
-            rotated_op = self._dictionary_rotation(P,clifford,angle)
+            rotated_op = self._dictionary_rotation(pauli_rot,angle,clifford_flag)
 
-        return operator(rotated_op)
+        return QubitOp(rotated_op)
+
+
+    def perform_rotations(self, rotation_list:List[Tuple[str,float,bool]]):
+        """ Allows one to perform a list of rotations sequentially
+        """
+        op_copy = QubitOp(deepcopy(self._dict))
+
+        for pauli_rot, angle, clifford_flag in rotation_list:
+            op_copy = op_copy.rotate_by(pauli_rot,angle,clifford_flag)
+
+        return op_copy
+
 
         

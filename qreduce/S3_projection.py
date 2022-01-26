@@ -1,22 +1,20 @@
-from qreduce.utils.operator_toolkit import *
-from qreduce.utils.tapering import gf2_gaus_elim
-from typing import Dict, List, Tuple
+from qreduce.utils.QubitOp import QubitOp
+from qreduce.utils.symplectic_toolkit import *
+from itertools import product
+from typing import Dict, List, Tuple, Union
 from copy import deepcopy
 
 
 class S3_projection:
-    def __init__(self, 
-                operator: Dict[str, float],
+    def __init__(self,
                 stabilizers: List[str], 
                 eigenvalues: List[int],
                 single_pauli: str,
-                used_qubits: List[int] = [],
-                proj_qubits: List[int] = None
                 ) -> None:
         """
         """
-        self.operator = operator
-        self.num_qubits  = number_of_qubits(operator)
+        self.n_qubits = number_of_qubits(stabilizers)
+
         # check the stabilizers are independent:
         check_independent = gf2_gaus_elim(build_symplectic_matrix(stabilizers))
         for row in check_independent:
@@ -24,100 +22,128 @@ class S3_projection:
                 raise ValueError('The supplied stabilizers are not independent')
         self.stabilizers = stabilizers
         self.eigenvalues = eigenvalues
+        # store stabilizers and their assignments as QubitOp object
+        # this facilitates various manipulations such as Pauli rotations
+        self.stab_eigval = QubitOp({S:eigval for S,eigval 
+                                            in zip(stabilizers, eigenvalues)})
         self.single_pauli= single_pauli
-        self.used_qubits = used_qubits
-        self.proj_qubits = proj_qubits
+        
+        # identify a valid mapping onto qubits
+        non_identity_pos = [[i for i,Gi in enumerate(G) if Gi!='I'] for G in stabilizers]
+        valid_permutations = [prod for prod in product(*non_identity_pos) if len(set(prod))==len(stabilizers)]
+        self.stab_to_qubit = {S:q for S,q in zip(stabilizers, valid_permutations[0])}
 
 
     def stabilizer_rotations(self):
-        """ Implementation of procedure described in https://doi.org/10.22331/q-2021-05-14-456 (Lemma A.2)
-        Returns dictionary of stabilizers with the rotations mapping each to a single Pauli in the form
-        List[Tuple[rotation, angle, gen_rot]], the corresponding qubit position and eigenvalue post-rotation
+        """ 
+        Implementation of procedure described in https://doi.org/10.22331/q-2021-05-14-456 (Lemma A.2)
+        
+        Returns 
+        - a dictionary of stabilizers with the rotations mapping each to a 
+          single Pauli in the formList[Tuple[rotation, angle, gen_rot]], 
+        
+        - a dictionary of qubit positions that we have rotated onto and 
+          the eigenvalues post-rotation
+        
+        TODO - this method could definitely be more elegant!
         """
-        stabilizer_map = {S:{   
-                            'rotations':[], 
-                            'single_pauli_index':None, 
-                            'single_pauli':None, 
-                            'eigenvalue':None
-                            } 
-                            for S in self.stabilizers}
+
         single_pauli_map = {'X':{1:'Z', 2:'Y'},
                             'Y':{1:'X', 2:'Z'},
                             'Z':{1:'Y', 2:'X'}}
-        used_qubits = deepcopy(self.used_qubits)
-        all_rotations=[]
 
+        def amend_string_index( string:Union[str,list], 
+                        index:int, character:str
+                        )->str:
+            """Update a string at a given index with some character 
+            """
+            listed = list(deepcopy(string))
+            listed[index] = character
+            return ''.join(listed)
+        
+        
+        used_qubits = []
+        rotations = []
+        
         for S in self.stabilizers:
-            S_rot = list(rotate_operator({S:1}, all_rotations).keys())[0]
+            # perform the current list of rotations 
+            # (since each rotation is dependent on those preceeding it)
+            S_rot = list(QubitOp({S:1}).perform_rotations(rotations)._dict.keys())[0]
 
-            if set(S_rot) == {'I',self.single_pauli} and S_rot.count(self.single_pauli)==1:
-                used_qubits.append(S_rot.index(self.single_pauli))
-                single_pauli_index = S_rot.index(self.single_pauli)
-                stabilizer_map[S]['single_pauli_index'] = single_pauli_index
-
-            else:
+            # check if the stabilizer is already a single Pauli operator
+            if S.count(self.single_pauli)!=1:
+                # Check if diagonal with respect to single_pauli
                 if set(S_rot) in [{self.single_pauli},{'I',self.single_pauli}]:
-                    potential_single_pauli_indices = [i for i in range(self.num_qubits) if 
-                                            S_rot[i]==self.single_pauli and i not in used_qubits]
+                    # identify a qubit position that is available for rotation onto
+                    potential_single_pauli_indices = [i for i,Si in enumerate(S_rot) if
+                                            Si==self.single_pauli and i not in used_qubits]
                     single_pauli_index = potential_single_pauli_indices[0]
-                        
-                    rot_op = amend_string_index(['I' for i in range(self.num_qubits)],
+                    # this defines corresponding rotations (see link to paper above)
+                    rot_op = amend_string_index(['I' for i in range(self.n_qubits)],
                                                 single_pauli_index,
-                                                single_pauli_map[self.single_pauli][1]
-                                                )
-                    stabilizer_map[S]['rotations'].append((rot_op, np.pi/2, True))
-                    all_rotations.append((rot_op, np.pi/2, True))
+                                                single_pauli_map[self.single_pauli][1])
                     S_offdiag = amend_string_index(S_rot,
                                                 single_pauli_index,
-                                                single_pauli_map[self.single_pauli][2]
-                                                )
+                                                single_pauli_map[self.single_pauli][2])
+                    rotations.append((rot_op, np.pi/2, True))
+                    # now the stabilizer is non-diagonal!
                 else:
+                    # for non-diagonal stabilizer:
                     S_offdiag = deepcopy(S_rot)
-                    single_pauli_index = [i for i in range(self.num_qubits) if 
-                                S_offdiag[i] not in ['I',self.single_pauli] and i not in used_qubits][0]
-                
-                stabilizer_map[S]['single_pauli_index'] = single_pauli_index
+                    single_pauli_index = [i for i,Si in enumerate(S_offdiag) if 
+                                Si not in ['I',self.single_pauli] and i not in used_qubits][0]
+
+                # rotation for non-diagonal stabilizer (wrt to chosen single_pauli) onto single Pauli operator
                 if S_offdiag[single_pauli_index] == single_pauli_map[self.single_pauli][2]:
                     rot_op = amend_string_index(S_offdiag,
                                                 single_pauli_index,
-                                                single_pauli_map[self.single_pauli][1]
-                                                )
+                                                single_pauli_map[self.single_pauli][1])
                 else:
                     rot_op = amend_string_index(S_offdiag,
                                                 single_pauli_index,
-                                                single_pauli_map[self.single_pauli][2]
-                                                )
-                stabilizer_map[S]['rotations'].append((rot_op, np.pi/2, True))
-                all_rotations.append((rot_op, np.pi/2, True))
-                    
+                                                single_pauli_map[self.single_pauli][2])
+                rotations.append((rot_op, np.pi/2, True))
+            else:
+                single_pauli_index = S_rot.index(self.single_pauli)
+            
+            # append to used_qubits the qubit index onto which we rotated 
+            # so that it cannot be used for subsequent stabilizers
             used_qubits.append(single_pauli_index)
-        
-        stabilizer_assignments = {S:eigval for S,eigval in zip(self.stabilizers, self.eigenvalues)}
-        rotated_stabilizers = rotate_operator(stabilizer_assignments, all_rotations)
-        for S, (S_rot, eigval_rot) in zip(self.stabilizers, rotated_stabilizers.items()):
-            stabilizer_map[S]['single_pauli'] = S_rot
-            stabilizer_map[S]['eigenvalue'] = eigval_rot
 
-        return all_rotations, stabilizer_map
+        # perform the full list of rotations to obtain the new eigenvalues
+        rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict
+        stab_index_eigenval = {S_rot.index(self.single_pauli):eigval 
+                            for S_rot,eigval in rotated_stabilizers.items()}
+
+        return rotations, stab_index_eigenval
 
 
     def _perform_projection(self, 
                         operator: Dict[str, float],  
                         q_sector: Dict[int, int],
                         ) -> Dict[str, float]:
-        """ method for projecting an operator over fixed qubit positions
-        stabilized by single Pauli operators (obtained via Clifford operations)
+        """ 
+        method for projecting an operator over fixed qubit positions stabilized 
+        by single Pauli operators (obtained via Clifford operations)
+
+        TODO update method to work with symplectic representation
         """
         # qubits for projection must be ordered
         stab_q, sector = zip(*sorted(q_sector.items(), key=lambda x:x[0]))
         operator_proj = {}
         for pauli in operator:
+            # split the Pauli string in accordance with the 
+            # projected qubits and those we wish to simulate
             pauli_stab = "".join([pauli[i] for i in stab_q])
-            pauli_free = "".join([pauli[i] for i in range(self.num_qubits) if i not in stab_q])
+            pauli_free = "".join([pauli[i] for i in range(self.n_qubits) if i not in stab_q])
+            
+            # keep only the terms for which the stabilized qubit positions are diagonal (wrt single_pauli)
             if set(pauli_stab) in [{"I"}, {self.single_pauli}, {"I", self.single_pauli}]:
+                # update the sign according to the stabilizer eigenvalues
                 sign = np.prod(
                     [eigval for eigval,stab in zip(sector, pauli_stab) if stab == self.single_pauli]
                 )
+                # append simulated part to the projected operator
                 if pauli_free not in operator_proj:
                     operator_proj[pauli_free] = sign * operator[pauli]
                 else:
@@ -127,27 +153,28 @@ class S3_projection:
     
 
     def perform_projection(self,
+                    operator: QubitOp,
                     insert_rotation:Tuple[str,float,bool]=None
                     )->Dict[float, str]:
+        """ 
+        Input a QubitOp and returns the reduced operator corresponding 
+        with the specified stabilizers and eigenvalues.
+        
+        insert_rotation allows one to include supplementary Pauli rotations
+        to be performed prior to the stabilizer rotations, for example 
+        unitary partitioning in CS-VQE
         """
-        """
-        all_rotations, stabilizer_map = self.stabilizer_rotations()
+        # obtain the full list of stabilizer rotations...
+        all_rotations, stab_index_eigenval = self.stabilizer_rotations()
+        # ...and insert any supplementary ones coming from the child class
         if insert_rotation is not None:
             all_rotations.insert(0, insert_rotation)
         self.all_rotations = all_rotations
 
-        stab_q = [S_data['single_pauli_index'] for S_data in stabilizer_map.values()]
-        sector = [S_data['eigenvalue'] for S_data in stabilizer_map.values()]
-        q_sector = {q:eigval for q,eigval in zip(stab_q, sector)}
+        # perform the full list of rotations on the input operator...
+        op_rotated = operator.perform_rotations(all_rotations)._dict
+        # ...and finally perform the stabilizer subspace projection
+        ham_project = self._perform_projection( operator=op_rotated, 
+                                                q_sector=stab_index_eigenval)
 
-        if self.proj_qubits is not None:
-            assert(len(self.proj_qubits) <= len(stab_q))
-            q_sector = {q:q_sector[q] for q in self.proj_qubits}
-
-        free_q = list(set(range(self.num_qubits))-set(stab_q))
-
-        ham_rotated = rotate_operator(self.operator, all_rotations, cleanup=False)
-        ham_project = self._perform_projection(
-            operator=ham_rotated, q_sector=q_sector)
-
-        return ham_project, free_q
+        return QubitOp(ham_project)
