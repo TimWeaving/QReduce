@@ -1,9 +1,8 @@
 from qreduce.S3_projection import S3_projection
+from qreduce.utils.QubitOp import QubitOp
 from qreduce.utils.operator_toolkit import *
 from qreduce.utils.symplectic_toolkit import *
 from qreduce.utils.cs_vqe_tools_legacy import (greedy_dfs,to_indep_set,quasi_model)
-from qreduce.utils.tapering import gf2_gaus_elim
-import qreduce.utils.tapering as t
 import qreduce.utils.qonversion_tools as qonvert
 from itertools import combinations, product
 import numpy as np
@@ -20,24 +19,23 @@ class cs_vqe(S3_projection):
                 ) -> None:
         """
         """
-        self.hamiltonian = hamiltonian
-        self.n_qubits = number_of_qubits(hamiltonian)
+        self.hamiltonian = QubitOp(hamiltonian)
+        self.n_qubits = self.hamiltonian.n_qbits
+        self.single_pauli = single_pauli
         if noncontextual_set is not None:
             self.noncontextual_set = noncontextual_set
         else:
             self.noncontextual_set = self.find_noncontextual_set()
-        self.single_pauli = single_pauli
-        
-        self.ham_noncontextual = {op:coeff for op,coeff in self.hamiltonian.items() if op in self.noncontextual_set}
-        self.ham_contextual = {op:coeff for op,coeff in self.hamiltonian.items() if op not in self.noncontextual_set}
-        
-        self.symmetry, self.cliques = self.decompose_noncontextual_set()
-        self.cliquereps = self.choose_clique_representatives()
-        self.generators = self.find_symmetry_generators()
+        self.ham_noncontextual = QubitOp({op:coeff for op,coeff in self.hamiltonian._dict.items() 
+                                            if op in self.noncontextual_set})
 
-        #model = quasi_model(self.ham_noncontextual)
-        #self.generators= model[0]
-        #self.cliquereps= model[1]
+        self.symmetry, self.cliques = self.decompose_noncontextual_set()
+        #self.cliquereps = self.choose_clique_representatives()
+        #self.generators = self.find_symmetry_generators()
+
+        model = quasi_model(self.ham_noncontextual._dict)
+        self.generators= model[0]
+        self.cliquereps= model[1]
 
         self.objfncprms = self.classical_obj_fnc_params(
             G=self.generators, C=self.cliquereps
@@ -60,7 +58,7 @@ class cs_vqe(S3_projection):
         """
         # for now uses the legacy greedy DFS approach
         # to be updated once more efficient/effective methods are identified
-        noncontextual_set = greedy_dfs(self.hamiltonian, cutoff=search_time,
+        noncontextual_set = greedy_dfs(self.hamiltonian._dict, cutoff=search_time,
                             criterion="weight")[1]
         return noncontextual_set
 
@@ -126,31 +124,18 @@ class cs_vqe(S3_projection):
 
 
     def find_symmetry_generators(self):
-        """Find independent generating set for noncontextual symmetry via Gaussian elimination
+        """Find independent generating set for noncontextual symmetry
         """
 
-        # represent noncontextual symmetry symplectically
-        symmetry_matrix = build_symplectic_matrix(self.symmetry)
-        for rep,clique in zip(self.cliquereps,self.cliques):
-            A_ij_sym_matrix = (build_symplectic_matrix(clique)+pauli_to_symplectic(rep))%2
-            symmetry_matrix = np.concatenate((symmetry_matrix, A_ij_sym_matrix))
+        # swap order of XZ blocks in symplectic matrix to ZX
+        ZX_symp = self.ham_noncontextual.swap_XZ_blocks()
+        reduced = gf2_gaus_elim(ZX_symp)
+        kernel  = gf2_basis_for_gf2_rref(reduced)
 
-        # perform Gaussian elimination
-        sym_row_reduced = gf2_gaus_elim(symmetry_matrix)
-        sym_row_reduced = sym_row_reduced[
-            ~np.all(sym_row_reduced == 0, axis=1)
-        ]  # remove zero rows
-        #generators = [pauli_from_symplectic(p) for p in sym_row_reduced]
-        
-        #generators, reconstruction = to_indep_set({op:[1] for op in universally_commuting})
-        #generators = [G[0] for G in generators]
-
-        hamiltonian_jw = qonvert.dict_to_QubitOperator(self.ham_noncontextual)
-        G_mat = t.build_G_matrix([t for t in hamiltonian_jw], self.n_qubits)
-        generators = [pauli_from_symplectic(row) for row in t.gf2_basis_for_gf2_rref(t.gf2_gaus_elim(t.build_E_matrix(G_mat)))]
-
+        generators = [pauli_from_symplectic(row) for row in kernel]
         # check whether the generators are contained in the symmetry
         # choose another if not...
+        
         if not all([G in self.symmetry for G in generators[1:]]):
             raise Exception('Not all reduced generators reside within the noncontextual symmetry')
 
@@ -174,14 +159,14 @@ class cs_vqe(S3_projection):
         obj_fnc_params = []
         for G_op, q_indices in G_closure:
             try:
-                h_G = self.hamiltonian[G_op]
+                h_G = self.hamiltonian._dict[G_op]
             except:
                 h_G = 0
             C_vec = []
             for C_op in C:
                 GC_op = multiply_paulis(G_op, C_op)
                 try:
-                    h_GC = self.hamiltonian[GC_op]
+                    h_GC = self.hamiltonian._dict[GC_op]
                 except:
                     h_GC = 0
                 C_vec.append(h_GC)
@@ -265,10 +250,9 @@ class cs_vqe(S3_projection):
 
           
     def _contextual_subspace_projection(self,   
-                                        operator:Dict[str,float],
-                                        stabilizer_indices:List[int] = None,
-                                        projection_qubits: List[int] = None
-                                        ) -> Dict[str, float]:
+                                        operator:QubitOp,
+                                        stabilizer_indices:List[int] = None
+                                        ) -> QubitOp:
         """ Returns the restriction of an operator to the contextual subspace 
         defined by a projection over stabilizers corresponing with stabilizer_indices
         """
@@ -277,35 +261,36 @@ class cs_vqe(S3_projection):
 
         # Now invoke the stabilizer subspace projection class methods given the chosen
         # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
-        super().__init__(operator   = operator, 
+        super().__init__(
                         stabilizers = stabilizers, 
                         eigenvalues = eigenvalues, 
-                        single_pauli= self.single_pauli,
-                        proj_qubits = projection_qubits)
+                        single_pauli= self.single_pauli
+                        )
 
         if 0 in stabilizer_indices:
             # Note element 0 is always the anticommuting clique operator, hence in this case
             # we need to insert the unitary partitioning rotations before applying the
             # remaining stabilizer rotations determined by S3_projection
-            operator_cs = self.perform_projection(insert_rotation = self.unitary_partitioning)
+            operator_cs = self.perform_projection(
+                operator=operator,
+                insert_rotation = self.unitary_partitioning
+            )
         else:
-            operator_cs = self.perform_projection()
+            operator_cs = self.perform_projection(operator=operator)
 
         return operator_cs
 
 
     def contextual_subspace_hamiltonian(self,
-                                        stabilizer_indices:List[int],
-                                        projection_qubits: List[int] = None
+                                        stabilizer_indices:List[int]
                                         ) -> Dict[str,float]:
         """ Construct and return the CS-VQE Hamiltonian for the stabilizers
         corresponding with stabilizer_indices
         """
         ham_cs = self._contextual_subspace_projection(operator=self.hamiltonian,
-                                                    stabilizer_indices=stabilizer_indices,
-                                                    projection_qubits = projection_qubits)
+                                                    stabilizer_indices=stabilizer_indices)
 
-        return cleanup_operator(ham_cs, threshold=8)
+        return cleanup_operator(ham_cs._dict, threshold=8)
 
 
     def noncontextual_ground_state(self,
