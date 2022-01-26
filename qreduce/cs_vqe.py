@@ -1,7 +1,9 @@
 from qreduce.S3_projection import S3_projection
-from qreduce.utils import *
-from qreduce.cs_vqe_tools_legacy import greedy_dfs, to_indep_set
-from qreduce.tapering import gf2_gaus_elim
+from qreduce.utils.QubitOp import QubitOp
+from qreduce.utils.operator_toolkit import *
+from qreduce.utils.symplectic_toolkit import *
+from qreduce.utils.cs_vqe_tools_legacy import (greedy_dfs,to_indep_set,quasi_model)
+import qreduce.utils.qonversion_tools as qonvert
 from itertools import combinations, product
 import numpy as np
 from scipy.optimize import minimize_scalar
@@ -17,19 +19,24 @@ class cs_vqe(S3_projection):
                 ) -> None:
         """
         """
-        self.hamiltonian = hamiltonian
-        self.num_qubits = number_of_qubits(hamiltonian)
+        self.hamiltonian = QubitOp(hamiltonian)
+        self.n_qubits = self.hamiltonian.n_qbits
+        self.single_pauli = single_pauli
         if noncontextual_set is not None:
             self.noncontextual_set = noncontextual_set
         else:
             self.noncontextual_set = self.find_noncontextual_set()
-        self.single_pauli = single_pauli
-        
-        self.ham_noncontextual = {op:coeff for op,coeff in self.hamiltonian.items() if op in self.noncontextual_set}
-        self.ham_contextual = {op:coeff for op,coeff in self.hamiltonian.items() if op not in self.noncontextual_set}
+        self.ham_noncontextual = QubitOp({op:coeff for op,coeff in self.hamiltonian._dict.items() 
+                                            if op in self.noncontextual_set})
+
         self.symmetry, self.cliques = self.decompose_noncontextual_set()
-        self.cliquereps = self.choose_clique_representatives()
-        self.generators = self.find_symmetry_generators()
+        #self.cliquereps = self.choose_clique_representatives()
+        #self.generators = self.find_symmetry_generators()
+
+        model = quasi_model(self.ham_noncontextual._dict)
+        self.generators= model[0]
+        self.cliquereps= model[1]
+
         self.objfncprms = self.classical_obj_fnc_params(
             G=self.generators, C=self.cliquereps
         )
@@ -46,12 +53,12 @@ class cs_vqe(S3_projection):
         self.nu = np.insert(self.nu, 0, C_eigval)
         
 
-    def find_noncontextual_set(self, search_time=3):
+    def find_noncontextual_set(self, search_time=10):
         """Method for extracting a noncontextual subset of the hamiltonian terms
         """
         # for now uses the legacy greedy DFS approach
         # to be updated once more efficient/effective methods are identified
-        noncontextual_set = greedy_dfs(self.hamiltonian, cutoff=search_time,
+        noncontextual_set = greedy_dfs(self.hamiltonian._dict, cutoff=search_time,
                             criterion="weight")[1]
         return noncontextual_set
 
@@ -61,7 +68,7 @@ class cs_vqe(S3_projection):
         remaining pairwise anticommuting cliques
         """
         commutation_matrix = adjacency_matrix(
-            self.noncontextual_set, self.num_qubits) == 0
+            self.noncontextual_set, self.n_qubits) == 0
         symmetry_indices = []
         for index, commutes_with in enumerate(commutation_matrix):
             if np.all(commutes_with):
@@ -97,16 +104,18 @@ class cs_vqe(S3_projection):
         # results in more rotations but each qubit position effectively encodes 'more information'
         # about the collective Hamiltonian... results in chemical accuracy being achieved faster?
         
-        offset=8
+        offset=0
+        index=offset
         for clique in self.cliques:   
             # it seems the choice of clique representative
             # has some bearing on the success of CS-VQE...
-            if all([op.find('X')==-1 for op in clique]):
-                index = offset
-            else:
-                index = -offset
+            
+            #if all([op.find('X')==-1 for op in clique]):
+            #    index = offset
+            #else:
+            #    index = -offset
             op_weights = [(op, op.count("I")) for op in clique]
-            op_weights = sorted(op_weights, key=lambda x: x[1])
+            op_weights = sorted(op_weights, key=lambda x: -x[1])
             clique_reps.append(op_weights[index][0])
 
         #clique_reps = [self.cliques[0][1], self.cliques[1][7]]
@@ -115,35 +124,22 @@ class cs_vqe(S3_projection):
 
 
     def find_symmetry_generators(self):
-        """Find independent generating set for noncontextual symmetry via Gaussian elimination
+        """Find independent generating set for noncontextual symmetry
         """
-        A_ij_ops=[]
-        for rep,clique in zip(self.cliquereps,self.cliques):
-            for C in clique:
-                if C!=rep:
-                    A_ij = multiply_paulis(C,rep)
-                    A_ij_ops.append(A_ij)
 
-        universally_commuting = set(self.symmetry+A_ij_ops)
-        symmetry_matrix = build_symplectic_matrix(universally_commuting)
+        # swap order of XZ blocks in symplectic matrix to ZX
+        ZX_symp = self.ham_noncontextual.swap_XZ_blocks()
+        reduced = gf2_gaus_elim(ZX_symp)
+        kernel  = gf2_basis_for_gf2_rref(reduced)
 
-        sym_row_reduced = gf2_gaus_elim(symmetry_matrix)
-        sym_row_reduced = sym_row_reduced[
-            ~np.all(sym_row_reduced == 0, axis=1)
-        ]  # remove zero rows
-        generators = [pauli_from_symplectic(p) for p in sym_row_reduced]
+        generators = [pauli_from_symplectic(row) for row in kernel]
+        # check whether the generators are contained in the symmetry
+        # choose another if not...
         
-        heavy_generators=[]
-        for P in generators:
-            for Q in generators:
-                if P!=Q:
-                    P=multiply_paulis(P,Q)
-            heavy_generators.append(P)
+        if not all([G in self.symmetry for G in generators[1:]]):
+            raise Exception('Not all reduced generators reside within the noncontextual symmetry')
 
-        #heavy_generators, reconstruction = to_indep_set({op:[1] for op in universally_commuting})
-        #heavy_generators = [G[0] for G in heavy_generators]
-
-        return heavy_generators
+        return generators
 
 
     def classical_obj_fnc_params(self, G: List[str], C: List[str]):
@@ -157,20 +153,20 @@ class cs_vqe(S3_projection):
             (multiply_pauli_list(comb), [G.index(op) for op in comb])
             for comb in G_combs
         ]
-        G_closure.append(("".join(["I" for i in range(self.num_qubits)]), []))
+        G_closure.append(("".join(["I" for i in range(self.n_qubits)]), []))
 
         # extract the relevant coefficients for the sum over G_closure as in eq 13/14 of https://arxiv.org/pdf/2002.05693.pdf
         obj_fnc_params = []
         for G_op, q_indices in G_closure:
             try:
-                h_G = self.hamiltonian[G_op]
+                h_G = self.hamiltonian._dict[G_op]
             except:
                 h_G = 0
             C_vec = []
             for C_op in C:
                 GC_op = multiply_paulis(G_op, C_op)
                 try:
-                    h_GC = self.hamiltonian[GC_op]
+                    h_GC = self.hamiltonian._dict[GC_op]
                 except:
                     h_GC = 0
                 C_vec.append(h_GC)
@@ -236,7 +232,7 @@ class cs_vqe(S3_projection):
         Currently works only when number of cliques M=2
         """
         order_terms = sorted(
-            self.anti_clique_operator.items(), key=lambda x: -abs(x[1]))
+            self.anti_clique_operator.items(), key=lambda x: (x[0].count('X')+x[0].count('Y')))
         Aa, Bb = order_terms
         A, a = Aa
         B, b = Bb
@@ -254,10 +250,9 @@ class cs_vqe(S3_projection):
 
           
     def _contextual_subspace_projection(self,   
-                                        operator:Dict[str,float],
-                                        stabilizer_indices:List[int] = None,
-                                        projection_qubits: List[int] = None
-                                        ) -> Dict[str, float]:
+                                        operator:QubitOp,
+                                        stabilizer_indices:List[int] = None
+                                        ) -> QubitOp:
         """ Returns the restriction of an operator to the contextual subspace 
         defined by a projection over stabilizers corresponing with stabilizer_indices
         """
@@ -266,35 +261,36 @@ class cs_vqe(S3_projection):
 
         # Now invoke the stabilizer subspace projection class methods given the chosen
         # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
-        super().__init__(operator   = operator, 
+        super().__init__(
                         stabilizers = stabilizers, 
                         eigenvalues = eigenvalues, 
-                        single_pauli= self.single_pauli,
-                        proj_qubits = projection_qubits)
+                        single_pauli= self.single_pauli
+                        )
 
         if 0 in stabilizer_indices:
             # Note element 0 is always the anticommuting clique operator, hence in this case
             # we need to insert the unitary partitioning rotations before applying the
             # remaining stabilizer rotations determined by S3_projection
-            operator_cs, free_q = self.perform_projection(insert_rotation = self.unitary_partitioning)
+            operator_cs = self.perform_projection(
+                operator=operator,
+                insert_rotation = self.unitary_partitioning
+            )
         else:
-            operator_cs, free_q = self.perform_projection()
+            operator_cs = self.perform_projection(operator=operator)
 
-        return operator_cs, free_q
+        return operator_cs
 
 
     def contextual_subspace_hamiltonian(self,
-                                        stabilizer_indices:List[int],
-                                        projection_qubits: List[int] = None
+                                        stabilizer_indices:List[int]
                                         ) -> Dict[str,float]:
         """ Construct and return the CS-VQE Hamiltonian for the stabilizers
         corresponding with stabilizer_indices
         """
-        ham_cs, free_q = self._contextual_subspace_projection(operator=self.hamiltonian,
-                                                    stabilizer_indices=stabilizer_indices,
-                                                    projection_qubits = projection_qubits)
+        ham_cs = self._contextual_subspace_projection(operator=self.hamiltonian,
+                                                    stabilizer_indices=stabilizer_indices)
 
-        return cleanup_operator(ham_cs, threshold=8), free_q
+        return cleanup_operator(ham_cs._dict, threshold=8)
 
 
     def noncontextual_ground_state(self,
@@ -302,7 +298,7 @@ class cs_vqe(S3_projection):
                                 projection_qubits: List[int] = None
                                 ) -> str:
         if projection_qubits is not None:
-            sim_qubits = list(set(range(self.num_qubits))-set(projection_qubits))
+            sim_qubits = list(set(range(self.n_qubits))-set(projection_qubits))
         ham_cs, free_q = self.contextual_subspace_hamiltonian(stabilizer_indices=stabilizer_indices, projection_qubits=projection_qubits)
         all_generators = {G:eigval for G, eigval in zip(self.generators, self.nu)}
         rotate_gen = rotate_operator(operator=all_generators, rotations=self.all_rotations, cleanup=True)

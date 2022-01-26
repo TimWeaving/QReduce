@@ -525,30 +525,6 @@ def apply_rotation(rotation,p):
     
     return out
 
-
-def rotate_operator(rotations, op):
-    
-    op_rotated=deepcopy(op)
-
-    for r in rotations: # rotate the full Hamiltonian to the basis with diagonal noncontextual generators
-        op_next = {}
-        for t in op_rotated.keys():
-            t_set_next = apply_rotation(r,t)
-            for t_next in t_set_next.keys():
-                if t_next in op_next.keys():
-                    op_next[t_next] = op_next[t_next] + t_set_next[t_next]*op_rotated[t]
-                else:
-                    op_next[t_next] = t_set_next[t_next]*op_rotated[t]
-        op_rotated = deepcopy(op_next)
-    
-    op_out={}
-    for t in op_rotated.keys():
-        if op_rotated[t] != 0:
-            op_out[t] = op_rotated[t]
-
-    return op_out
-
-
 # For a Pauli operator P (specified as a string),
 # returns the matrix representation of P as a scipy.sparse.csr_matrix object.
 def pauli_to_sparse(P):
@@ -583,7 +559,7 @@ def pauli_to_sparse(P):
         sgn = bin(r&z)
         vals.append( ((-1.0)**sum([int(sgn[i]) for i in range(2,len(sgn))])) * ((-1j)**y) )
         
-    m = coo_matrix( (vals, (rows, cols)), dtype = np.dtype(np.complex128) )
+    m = coo_matrix( (vals, (rows, cols)) )
     
     return m.tocsr()
 
@@ -717,7 +693,6 @@ def get_reduced_hamiltonians(ham,model,fn_form,ep_state,order):
                 order[i] -= 1
     
     out = []
-    sim_indices = []
     
     for k in range(order_len+1):
     
@@ -764,12 +739,6 @@ def get_reduced_hamiltonians(ham,model,fn_form,ep_state,order):
                 else:
                     ham_red[t_red] = ham_rotated[t]*sgn
 
-        z_complement = list(set(range(n_q))-set(z_indices))
-        #print(z_complement)
-        for i in z_complement:
-            if i not in sim_indices:
-                sim_indices.append(i)
-
         out.append(ham_red)
 
         if order:
@@ -779,7 +748,7 @@ def get_reduced_hamiltonians(ham,model,fn_form,ep_state,order):
             diagonal_set = diagonal_set[:i]+diagonal_set[i+1:]
             vals = vals[:i]+vals[i+1:]
     
-    return sim_indices, out
+    return out
 
 
 # Given ham (the full Hamiltonian), model (the quasi-quantized model for the noncontextual part),
@@ -860,7 +829,7 @@ def contextual_subspace_approximations(ham,model,fn_form,ep_state,order):
     #         diagonal_set = diagonal_set[:i]+diagonal_set[i+1:]
     #         vals = vals[:i]+vals[i+1:]
 
-    reduced_hamiltonians = get_reduced_hamiltonians(ham,model,fn_form,ep_state,order)[1]
+    reduced_hamiltonians = get_reduced_hamiltonians(ham,model,fn_form,ep_state,order)
 
     n_q = len(list(ham.keys())[0])
 

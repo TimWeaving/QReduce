@@ -2,82 +2,11 @@ import numpy as np
 from copy import deepcopy
 from typing import List, Dict, Tuple, Union
 from matplotlib import pyplot as plt
-from itertools import permutations, product, combinations
+from itertools import permutations, product
+from qreduce.utils.symplectic_toolkit import *
+import qreduce.utils.qonversion_tools as qonvert
+from openfermion.linalg import get_sparse_operator,get_ground_state
 plt.style.use('ggplot')
-
-def pauli_to_symplectic(p_str: str) -> np.array:
-    """Convert Pauli string to symplectic representation
-    e.g. "XXYY" -> np.array([1. 1. 1. 1. 0. 0. 1. 1.])
-    """
-    num_qubits = len(p_str)
-    p_sym = np.zeros(2*num_qubits)
-    for index,p in enumerate(p_str):
-        if p=='X':
-            p_sym[index]=1
-        elif p=='Z':
-            p_sym[index+num_qubits]=1
-        elif p=='Y':
-            p_sym[index]=1
-            p_sym[index+num_qubits]=1
-    
-    return p_sym
-
-
-def pauli_from_symplectic(p_sym: np.array) -> str:
-    """Convert symplectic representation of Pauli operator to string
-    e.g. np.array([0. 1. 0. 1. 1. 0. 0. 1.]) -> ZXIY
-    """
-    num_qubits = len(p_sym)//2
-    p_str = ['I' for i in range(num_qubits)]
-    for i in range(num_qubits):
-        if p_sym[i]==1:
-            if p_sym[i+num_qubits]==0:
-                p_str[i]='X'
-            else:
-                p_str[i]='Y'
-        else:
-            if p_sym[i+num_qubits]==1:
-                p_str[i]='Z'
-    
-    return ''.join(p_str)
-
-
-def build_symplectic_matrix(p_list: List[str]) -> np.matrix:
-    """Stack of paulis in symplectic form
-    One matrix row per pauli term, number of columns in 2*num_qubits
-    """
-    p_sym_list = [pauli_to_symplectic(p) for p in p_list]
-    sym_mat = np.array(np.stack(p_sym_list), dtype=int)
-
-    return sym_mat
-
-
-def symplectic_inner_product(P:str,Q:str) -> int:
-    """If 0 is returned then P and Q commute, else they anticommute
-    """
-    assert(len(P)==len(Q))
-    num_qubits = len(P)
-
-    P_sym = pauli_to_symplectic(P)
-    Q_sym = pauli_to_symplectic(Q)
-
-    half_sym_form = np.eye(2*num_qubits,2*num_qubits,num_qubits)
-    sym_form = np.array(half_sym_form - half_sym_form.T, dtype=int)
-
-    return P_sym@sym_form@Q_sym.T % 2
-    
-
-def adjacency_matrix(p_list: List[str], 
-                    num_qubits: int
-                    ) -> np.matrix:
-    """Adjacency matrix of pauli list w.r.t. commutation
-    if entry i,j == 0 then pauli i and j commute, elif == 1 they anticommute
-    """
-    sym_mat  = build_symplectic_matrix(p_list)
-    half_sym_form = np.eye(2*num_qubits,2*num_qubits,num_qubits)
-    sym_form = np.array(half_sym_form + half_sym_form.T, dtype=int)
-    
-    return sym_mat@sym_form@sym_mat.T % 2
 
 
 def multiply_paulis(P: str, Q: str) -> str:
@@ -86,8 +15,9 @@ def multiply_paulis(P: str, Q: str) -> str:
     """
     P_sym = pauli_to_symplectic(P)
     Q_sym = pauli_to_symplectic(Q)
-    PQ = pauli_from_symplectic((P_sym+Q_sym)%2)
-
+    PQ_sym = (P_sym+Q_sym)%2
+    PQ = pauli_from_symplectic(PQ_sym[0])
+    
     return PQ
 
 
@@ -96,7 +26,7 @@ def multiply_pauli_list(pauli_list: List[str]) -> str:
     <!> Disregards the coefficient, refer to multiply_paulis_with_coeff if needed
     """
     pauli_list_sym = [pauli_to_symplectic(P) for P in pauli_list]
-    Prod = pauli_from_symplectic(sum(pauli_list_sym)%2)
+    Prod = pauli_from_symplectic((sum(pauli_list_sym)%2)[0])
 
     return Prod
 
@@ -242,21 +172,30 @@ def amend_string_index( string:Union[str,list],
     return ''.join(listed)
 
 
-def exact_gs_energy(operator:Dict[str, float]
+def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state
     vector for the input operator
     """
-    ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
-    eigvals, eigvecs = np.linalg.eigh(ham_mat)
-    ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+
+    if matrix_type=='sparse':
+        ham_of = qonvert.dict_to_QubitOperator(operator)
+        ham_sparse = get_sparse_operator(ham_of)
+        ground_energy, ground_state = get_ground_state(ham_sparse)
+    elif matrix_type=='dense':
+        ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
+        eigvals, eigvecs = np.linalg.eigh(ham_mat)
+        ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+    else:
+        raise ValueError('Accepted values for matrix_type are sparse or dense')
 
     return ground_energy, np.array(ground_state)
 
 
 def plot_ground_state_amplitudes(operator: Dict[str, float], 
                                 num_qubits: int, 
-                                reverse_bitstrings: bool=False
+                                reverse_bitstrings: bool=False,
+                                return_amps: bool = False
                                 )-> None:
     """ Prints a barplot of the probability amplitudes for each 
     basis state in the ground eigenstate of the input operator
@@ -266,7 +205,7 @@ def plot_ground_state_amplitudes(operator: Dict[str, float],
     if reverse_bitstrings:
         bitstrings.reverse()
     amps = [(b_str, amp) for b_str,amp 
-            in zip(bitstrings, np.square(abs(cs_vector)[0])) if amp>1e-10]
+            in zip(bitstrings, np.square(abs(cs_vector))) if amp>1e-5]
     amps = sorted(amps, key=lambda x:-x[1])
     X, Y = zip(*amps)
     
@@ -277,6 +216,9 @@ def plot_ground_state_amplitudes(operator: Dict[str, float],
     plt.title(f'Energy = {cs_energy: .10f}')
     plt.xticks(rotation=90)
     plt.show()
+
+    if return_amps:
+        return amps, cs_energy
     
 
 def number_of_qubits(operator:Dict[str, float]) -> int:
