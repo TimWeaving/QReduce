@@ -130,3 +130,4 @@ dmypy.json
 
 # Chemistry things
 *.hdf5
+sandbox.ipynb

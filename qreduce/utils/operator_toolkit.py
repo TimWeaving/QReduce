@@ -185,7 +185,7 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
     elif matrix_type=='dense':
         ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
         eigvals, eigvecs = np.linalg.eigh(ham_mat)
-        ground_energy, ground_state = sorted(zip(eigvals,eigvecs), key=lambda x:x[0])[0]
+        ground_energy, ground_state = sorted(zip(eigvals,eigvecs.T), key=lambda x:x[0])[0]
     else:
         raise ValueError('Accepted values for matrix_type are sparse or dense')
 
@@ -195,12 +195,13 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
 def plot_ground_state_amplitudes(operator: Dict[str, float], 
                                 num_qubits: int, 
                                 reverse_bitstrings: bool=False,
-                                return_amps: bool = False
+                                return_amps: bool = False,
+                                matrix_type='sparse'
                                 )-> None:
     """ Prints a barplot of the probability amplitudes for each 
     basis state in the ground eigenstate of the input operator
     """
-    cs_energy, cs_vector = exact_gs_energy(operator)
+    cs_energy, cs_vector = exact_gs_energy(operator, matrix_type=matrix_type)
     bitstrings = [format(index, f'0{num_qubits}b') for index in range(2**(num_qubits))]
     if reverse_bitstrings:
         bitstrings.reverse()

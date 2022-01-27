@@ -32,6 +32,8 @@ class QubitOp:
         self.symform = np.array(half_symform + half_symform.T, dtype=int)
 
         # Convert operator dictionary to symplectic represention
+        if type(operator)==list:
+            operator = {op:0 for op in operator}
         self._dict = operator
         self._symp, self.cfvec = symplectic_operator(operator)
 
