@@ -112,12 +112,16 @@ class tapering(S3_projection):
         *** very much NOT scalable!
         """
         tapered_ham = []
+        if self.n_qbits < 5:
+            matrix_type='dense'
+        else:
+            matrix_type='sparse'
         
         all_sectors = product([+1,-1], repeat=self.n_taper)
         for sector in all_sectors:
             self.update_S3_projection(sector)
             hamtap = self.taper_it()._dict
-            energy = exact_gs_energy(hamtap)[0]
+            energy = exact_gs_energy(hamtap, matrix_type)[0]
             tapered_ham.append(
                 (
                     sector,
