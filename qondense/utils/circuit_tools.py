@@ -1,6 +1,5 @@
 from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter, ParameterVector
-import itertools
 
 # TODO update exp_P to use cascade function
 def cascade(q_index, num_qubits=None, circ=None, reverse=False):

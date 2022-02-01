@@ -1,4 +1,4 @@
-from qreduce.utils.symplectic_toolkit import *
+from qondense.utils.symplectic_toolkit import *
 from copy import deepcopy
 
 class QubitOp:

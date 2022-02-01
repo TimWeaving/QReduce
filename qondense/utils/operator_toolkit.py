@@ -3,8 +3,8 @@ from copy import deepcopy
 from typing import List, Dict, Tuple, Union
 from matplotlib import pyplot as plt
 from itertools import permutations, product
-from qreduce.utils.symplectic_toolkit import *
-import qreduce.utils.qonversion_tools as qonvert
+from qondense.utils.symplectic_toolkit import *
+import qondense.utils.qonversion_tools as qonvert
 from openfermion.linalg import get_sparse_operator,get_ground_state
 plt.style.use('ggplot')
 
