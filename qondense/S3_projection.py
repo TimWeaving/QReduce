@@ -1,5 +1,5 @@
-from qreduce.utils.QubitOp import QubitOp
-from qreduce.utils.symplectic_toolkit import *
+from qondense.utils.QubitOp import QubitOp
+from qondense.utils.symplectic_toolkit import *
 from itertools import product
 from typing import Dict, List, Tuple, Union
 from copy import deepcopy
