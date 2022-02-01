@@ -25,14 +25,9 @@ class S3_projection:
         # store stabilizers and their assignments as QubitOp object
         # this facilitates various manipulations such as Pauli rotations
         self.stab_eigval = QubitOp({S:eigval for S,eigval 
-                                            in zip(stabilizers, eigenvalues)})
+                                    in zip(stabilizers, eigenvalues)})
         self.single_pauli= single_pauli
         
-        # identify a valid mapping onto qubits
-        non_identity_pos = [[i for i,Gi in enumerate(G) if Gi!='I'] for G in stabilizers]
-        valid_permutations = [prod for prod in product(*non_identity_pos) if len(set(prod))==len(stabilizers)]
-        self.stab_to_qubit = {S:q for S,q in zip(stabilizers, valid_permutations[0])}
-
 
     def stabilizer_rotations(self):
         """ 
@@ -164,17 +159,19 @@ class S3_projection:
         to be performed prior to the stabilizer rotations, for example 
         unitary partitioning in CS-VQE
         """
-        # obtain the full list of stabilizer rotations...
-        all_rotations, stab_index_eigenval = self.stabilizer_rotations()
+        # obtain the full list of stabilizer rotations and a dictionary of the 
+        # resulting single qubit Pauli indices with the eigenvalue post-rotation
+        stab_rotations, stab_index_eigval = self.stabilizer_rotations()
         # ...and insert any supplementary ones coming from the child class
         if insert_rotation is not None:
-            all_rotations.insert(0, insert_rotation)
-        self.all_rotations = all_rotations
+            stab_rotations.insert(0, insert_rotation)
+        self.stab_rotations    = stab_rotations
+        self.stab_index_eigval = stab_index_eigval
 
         # perform the full list of rotations on the input operator...
-        op_rotated = operator.perform_rotations(all_rotations)._dict
+        op_rotated = operator.perform_rotations(stab_rotations)._dict
         # ...and finally perform the stabilizer subspace projection
         ham_project = self._perform_projection( operator=op_rotated, 
-                                                q_sector=stab_index_eigenval)
+                                                q_sector=stab_index_eigval)
 
         return QubitOp(ham_project)

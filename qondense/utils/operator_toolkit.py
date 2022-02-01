@@ -172,6 +172,17 @@ def amend_string_index( string:Union[str,list],
     return ''.join(listed)
 
 
+def measure_operator(pauli, ref_state):
+    """ Measure a single Pauli operator in a single basis state
+    """
+    outcome=+1
+    assert(len(pauli)==len(ref_state))
+    for P,bit in zip(pauli, ref_state):
+        if P=='Z' and bit==1:
+            outcome*=-1
+    return outcome
+
+
 def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state

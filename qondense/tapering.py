@@ -1,6 +1,6 @@
 from qondense.S3_projection import S3_projection
 from qondense.utils.QubitOp import QubitOp
-from qondense.utils.operator_toolkit import exact_gs_energy
+from qondense.utils.operator_toolkit import exact_gs_energy, measure_operator
 from qondense.utils.symplectic_toolkit import *
 from itertools import product
 from typing import Dict
@@ -60,16 +60,8 @@ class tapering(S3_projection):
         """ Given the specified reference state, determine the
         correspinding sector by measuring the symmetry generators
         """
-        def measure_operator(op):
-            outcome=+1
-            assert(len(op)==len(self.ref_state))
-            for P,bit in zip(op, self.ref_state):
-                if P=='Z' and bit==1:
-                    outcome*=-1
-            return outcome
-
-        sector = [measure_operator(op) for op in self.symmetry_ops]
-
+        sector = [measure_operator(pauli, self.ref_state) 
+                    for pauli in self.symmetry_ops]
         return sector
 
 

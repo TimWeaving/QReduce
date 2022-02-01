@@ -1,7 +1,7 @@
 import json
 import numpy as np
 
-def hypermapper_specs(num_generators):
+def hypermapper_specs(q_vars):
     """ Here we may specify the hypermapper parameters, governing
     its behaviour. Writes cofspecs to a .json file to be read into
     the hypermapper.optimzer.optimize method
@@ -17,7 +17,6 @@ def hypermapper_specs(num_generators):
     cofspecs["models"] = {"model": "gaussian_process"} #"random_forest"
 
     # set the optimization variable parameters
-    q_vars = [f'q{i}' for i in range(num_generators)]
     cofspecs["input_parameters"] = {}
     # ordinal variable type will optimize over specified discrete values (+/-1 here)
     for var in q_vars:
