@@ -1,4 +1,4 @@
-# QReduce
+# Qondense
 ---
 
 Qubit reduction techniques such as [tapering](https://arxiv.org/abs/1701.08213) and [Contextual-Subspace VQE](https://doi.org/10.22331/q-2021-05-14-456) are effected by the underlying stabilizer subspace projection mechanism; such methods may be differentiated by the approach taken to selecting the stabilizers one wishes to project over. 
