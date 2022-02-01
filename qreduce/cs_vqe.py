@@ -1,24 +1,45 @@
 from qreduce.S3_projection import S3_projection
 from qreduce.utils.QubitOp import QubitOp
+from qreduce.utils.hypermapper_tools import hypermapper_specs
 from qreduce.utils.operator_toolkit import *
 from qreduce.utils.symplectic_toolkit import *
 from qreduce.utils.cs_vqe_tools_legacy import (greedy_dfs,to_indep_set,quasi_model)
-import qreduce.utils.qonversion_tools as qonvert
-from itertools import combinations, product
+from hypermapper import optimizer
+
+# general imports
+from itertools import combinations
 import numpy as np
-from scipy.optimize import minimize_scalar
 from typing import Dict, List
+import json
+import sys
+import csv
 
 class cs_vqe(S3_projection):
-    """
+    """ Class for performing Contextual-Subspace VQE as per https://doi.org/10.22331/q-2021-05-14-456.
+    Allows one to scale a quantum problem to the available quantum resource. This is an approximate
+    method but can achieve high levels of precision at a reduction in qubit count.
+
+    1. identify a noncontextual subset of terms in the full Hamiltonian,
+    2. Extract the noncontextual symmetry
+    3. find an independent basis of symmetry generators,
+    4. rotate each basis operator onto a single Pauli Z, 
+        whilst applying the same rotations to the full Hamiltonian 
+    5. drop the corresponding qubits from the Hamiltonian and
+    6. fix the +/-1 eigenvalues
+
+    Steps 1-3 are handled in this class whereas we defer to the parent S3_projection for 4-6.
     """
     def __init__(self,
                 hamiltonian: Dict[str, float],
                 noncontextual_set: List[str] = None,
                 single_pauli: str = 'Z'
                 ) -> None:
+        """ Input a Hamiltonian in the dictionary representation and, optionally, a noncontextual 
+        subset of Pauli terms (if not supplied then find_noncontextual_set() will be called.)
+        There is freedom over the choice of single Pauli operator we wish to rotate onto, however 
+        this is set to Z by default (in line with the original CS-VQE paper).
         """
-        """
+        # Hamiltonian and noncontextual model
         self.hamiltonian = QubitOp(hamiltonian)
         self.n_qubits = self.hamiltonian.n_qbits
         self.single_pauli = single_pauli
@@ -28,21 +49,17 @@ class cs_vqe(S3_projection):
             self.noncontextual_set = self.find_noncontextual_set()
         self.ham_noncontextual = QubitOp({op:coeff for op,coeff in self.hamiltonian._dict.items() 
                                             if op in self.noncontextual_set})
+        self.generators, self.cliquereps = self.independent_generators()
 
-        self.symmetry, self.cliques = self.decompose_noncontextual_set()
-        #self.cliquereps = self.choose_clique_representatives()
-        #self.generators = self.find_symmetry_generators()
-
-        model = quasi_model(self.ham_noncontextual._dict)
-        self.generators= model[0]
-        self.cliquereps= model[1]
-
+        # noncontextual ground state
         self.objfncprms = self.classical_obj_fnc_params(
             G=self.generators, C=self.cliquereps
         )
         self.ngs_energy, self.nu, self.r = self.find_noncontextual_ground_state()
         self.anti_clique_operator = {C: val for C,
                                      val in zip(self.cliquereps, self.r)}
+
+        # stabilizer rotations
         Q, t = self.unitary_partitioning_rotation()
         self.unitary_partitioning = (Q, t, False)
         clique_rot = rotate_operator(self.anti_clique_operator,[self.unitary_partitioning])
@@ -53,8 +70,8 @@ class cs_vqe(S3_projection):
         self.nu = np.insert(self.nu, 0, C_eigval)
         
 
-    def find_noncontextual_set(self, search_time=10):
-        """Method for extracting a noncontextual subset of the hamiltonian terms
+    def find_noncontextual_set(self, search_time=10) -> List[str]:
+        """ Method for extracting a noncontextual subset of the hamiltonian terms
         """
         # for now uses the legacy greedy DFS approach
         # to be updated once more efficient/effective methods are identified
@@ -63,87 +80,69 @@ class cs_vqe(S3_projection):
         return noncontextual_set
 
 
-    def decompose_noncontextual_set(self):
-        """Decompose a noncontextual set into its symmetry and
-        remaining pairwise anticommuting cliques
-        """
-        commutation_matrix = adjacency_matrix(
-            self.noncontextual_set, self.n_qubits) == 0
-        symmetry_indices = []
-        for index, commutes_with in enumerate(commutation_matrix):
-            if np.all(commutes_with):
-                symmetry_indices.append(index)
+    def independent_generators(self) -> List[str]:
+        """ Find independent generating set for noncontextual symmetry and clique representatives 
+        for the anticommuting part. Does so in the symplectic representation:
 
-        cliques = []
-        for i, commute_list in enumerate(commutation_matrix):
-            if i not in symmetry_indices:
-                C = frozenset(
-                    [
-                        self.noncontextual_set[j]
-                        for j, commutes in enumerate(commute_list)
-                        if commutes and j not in symmetry_indices
-                    ]
-                )
-                cliques.append(C)
-
-        symmetry = [self.noncontextual_set[i] for i in symmetry_indices]
-        cliques = [list(C) for C in set(cliques)]
-
-        return symmetry, cliques
-
-
-    def choose_clique_representatives(self):
-        """Choose an operator from each of the cliques determined in decompose_noncontextual_set
-        to complete the generating set and forms the observable C(r)
-        """
-        clique_reps = []
-        # choose the operator in each clique which is identity on the most qubit positions
-        # to choose the single pauli Z where possible
-        # ACTUALLY...
-        # perhaps best to choose representatives with minimal identity qubits...
-        # results in more rotations but each qubit position effectively encodes 'more information'
-        # about the collective Hamiltonian... results in chemical accuracy being achieved faster?
-        
-        offset=0
-        index=offset
-        for clique in self.cliques:   
-            # it seems the choice of clique representative
-            # has some bearing on the success of CS-VQE...
-            
-            #if all([op.find('X')==-1 for op in clique]):
-            #    index = offset
-            #else:
-            #    index = -offset
-            op_weights = [(op, op.count("I")) for op in clique]
-            op_weights = sorted(op_weights, key=lambda x: -x[1])
-            clique_reps.append(op_weights[index][0])
-
-        #clique_reps = [self.cliques[0][1], self.cliques[1][7]]
-        
-        return clique_reps
-
-
-    def find_symmetry_generators(self):
-        """Find independent generating set for noncontextual symmetry
+        1. obtains row-reduced form of flipped symplectic matrix [Z|X],
+        2. determines a basis for the kernel of the above (these are the symmetry generators),
+        3. the remaining rows of the row-reduced matrix form a basis for the anticommuting cliques
         """
 
+        # find symmetry generators
         # swap order of XZ blocks in symplectic matrix to ZX
         ZX_symp = self.ham_noncontextual.swap_XZ_blocks()
-        reduced = gf2_gaus_elim(ZX_symp)
-        kernel  = gf2_basis_for_gf2_rref(reduced)
+        ZX_reduced = gf2_gaus_elim(ZX_symp)
+        ZX_reduced = ZX_reduced[~np.all(ZX_reduced == 0, axis=1)]
+        kernel  = gf2_basis_for_gf2_rref(ZX_reduced)
+
+        # swap XZ order back
+        Z = ZX_reduced[:,:self.n_qubits]
+        X = ZX_reduced[:,self.n_qubits:]
+        XZ_reduced = np.hstack((X,Z))
+        # Remove symmetry generators from reduced symplectic matrix
+        # these should be the anticommuting generators...
+        unique_rows = []
+        for sympauli in XZ_reduced:
+            diff = kernel-sympauli
+            if list(np.where(~diff.any(axis=1))[0]) == []:
+                unique_rows.append(sympauli)
+        anti_kernel = np.stack(unique_rows)
 
         generators = [pauli_from_symplectic(row) for row in kernel]
+        cliquereps = [pauli_from_symplectic(row) for row in anti_kernel]
+
+        # some of the terms in cliquereps can actually belong 
+        # to the same clique at this point... pick one!
+        commutation_matrix = QubitOp(cliquereps).adjacency_matrix()
+        sort_order = np.lexsort(commutation_matrix.T)
+        sorted_comm_mat = commutation_matrix[sort_order,:]
+        # take difference between adjacent terms to identify duplicates (i.e. commuting operators)
+        row_mask = np.append([True],np.any(np.diff(sorted_comm_mat,axis=0),1))
+        cliquereps = [cliquereps[i] for i,include in zip(sort_order, row_mask) if include]
+        
         # check whether the generators are contained in the symmetry
         # choose another if not...
         
-        if not all([G in self.symmetry for G in generators[1:]]):
-            raise Exception('Not all reduced generators reside within the noncontextual symmetry')
+        #if not all([G in self.symmetry for G in generators[1:]]):
+        #    raise Exception('Not all reduced generators reside within the noncontextual symmetry')
 
-        return generators
+        return generators, cliquereps
 
 
-    def classical_obj_fnc_params(self, G: List[str], C: List[str]):
-        """
+    def classical_obj_fnc_params(self, 
+                                G: List[str], 
+                                C: List[str]
+                                ) -> List[Tuple[float, List[int], List[float]]]:
+        """Sums over the completion (under Pauli multiplication) of G and
+        extracts the non-zero Hamiltonian contributions. For each term we 
+        also list the indices of the generators used in its construction. 
+        For each iterate also multiplies by the clique representatives and 
+        again checks whether the resulting terms exist in the Hamiltonian. 
+        Any terms that do not appear have their coefficient set to zero in 
+        the objective function. Returns a list of everthing required to 
+        construct the classical objective function for the noncontextual 
+        ground state energy (defined in classical_obj_fnc method).
         """
         # construct the closure of the commuting generating set
         G_combs = []
@@ -155,7 +154,8 @@ class cs_vqe(S3_projection):
         ]
         G_closure.append(("".join(["I" for i in range(self.n_qubits)]), []))
 
-        # extract the relevant coefficients for the sum over G_closure as in eq 13/14 of https://arxiv.org/pdf/2002.05693.pdf
+        # extract the relevant coefficients for the sum over G_closure 
+        # as in eq 13/14 of https://arxiv.org/pdf/2002.05693.pdf
         obj_fnc_params = []
         for G_op, q_indices in G_closure:
             try:
@@ -170,59 +170,65 @@ class cs_vqe(S3_projection):
                 except:
                     h_GC = 0
                 C_vec.append(h_GC)
-            obj_fnc_params.append((h_G, q_indices, C_vec))
+            if h_G!=0 or not np.all(np.array(C_vec)==0):
+                obj_fnc_params.append((h_G, q_indices, C_vec))
 
         return obj_fnc_params
 
+    
+    def classical_obj_fnc(self, input_params: Dict) -> float:
+        """ Noncontextual ground state energy objective function:
+        built from the data generated in classical_obj_fnc_params
 
-    def evaluate_classical_obj_fnc(
-        self, nu: np.array, r: np.array, G: List[str] = None, C: List[str] = None,
-        ) -> float:
-        """Evaluates the classical objective function yielding
-        possible energies of the noncontextual Hamiltonian
+        input_params is a dictionary of cofspecs required by 
+        HyperMapper (defined in find_noncontextual_ground_state).
         """
-        if G is None and C is None:
-            G = self.generators
-            C = self.cliquereps
-            objfncprms = self.objfncprms
-        elif (G is None and C is not None) or (G is not None and C is None):
-            raise ValueError("G and C must both be None or not None")
-        else:
-            objfncprms = self.classical_obj_fnc_params(G=G, C=C)
-
-        assert len(nu) == len(G)
-        assert len(r) == len(C)
-
-        outsum = 0
-        for h_G, q_indices, h_GC_vec in objfncprms:
-            sign = np.prod([nu[i] for i in q_indices])
-            outsum += sign * (h_G + r.dot(np.array(h_GC_vec)))
-
-        return outsum
+        t = input_params['theta'] #parametrizes the r unit vector
+    
+        objfnc_sum = 0
+        for h_G, q_indices, h_GCs in self.objfncprms:
+            q_prod = np.prod([input_params[f'q{i}'] for i in q_indices])
+            objfnc_sum += (h_G+np.sin(t)*h_GCs[0]+np.cos(t)*h_GCs[1])*q_prod
+            
+        return objfnc_sum
 
 
-    def find_noncontextual_ground_state(self, G=None, C=None):
-        """Minimize the function defined in evaluate_classical_obj_fnc
+    def find_noncontextual_ground_state(self, 
+                                        ref_energy:float = None
+                                        ) -> Tuple[float, List[int], List[float]]:
+        """ Uses HyperMapper to perform discrete optimization over the
+        generator eigenvalue assingments q_i and the continuous r unit
+        vector specifying weights of anticommuting clique contributions.
+
+        HyperMapper writes results to a .csv file that we read back in
+        for use elsewhere in the cs_vqe class.
+
+        ref_energy allows one to specify a known ground state energy 
+        approximation (e.g. Hartree-Fock) as a benchmark for HyperMapper.
         """
-        if G is None and C is None:
-            G = self.generators
-            C = self.cliquereps
-        G_assignments = product([1, -1], repeat=len(G))
-        energies = []
-        # the value assignent q to generators G is brute force
-        for nu in G_assignments:
-            nu = np.array(nu, dtype=int)
-            if C==[]:
-                nrg = self.evaluate_classical_obj_fnc(nu, np.array([]), G=G, C=C)
-                energies.append([nrg, nu, []])
-            else:
-                # now optimize over the parameter r
-                sol = minimize_scalar(lambda x: self.evaluate_classical_obj_fnc(
-                    nu, np.array([np.cos(x), np.sin(x)]),G=G,C=C))
-                energies.append(
-                    [sol['fun'], nu, (np.cos(sol['x']), np.sin(sol['x']))])
+        # write HyperMapper specs to file data/ngs_calculator.json
+        hypermapper_specs(len(self.generators))
+        # Jupyter uses a special stdout and HyperMapper logging overwrites it.
+        stdout = sys.stdout
+        # Call HyperMapper to optimize the noncontextual energy objective function
+        optimizer.optimize("data/hypermapper/ngs_calculator.json", self.classical_obj_fnc)
+        # restore stdout for use in Jupyter
+        sys.stdout = stdout
 
-        energy, nu, r = sorted(energies, key=lambda x: x[0])[0]
+        optimizer_output=[]
+        with open("data/hypermapper/ngs_optimization_output_samples.csv", newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            # read in the optimizer output as (energy, G assignment, r vector)
+            for opt_guess in reader:
+                t = float(opt_guess['theta'])
+                optimizer_output.append(
+                    (
+                        float(opt_guess['objfnc_sum']),
+                        [int(opt_guess[f'q{i}']) for i in range(len(self.generators))], 
+                        [np.sin(t), np.cos(t)] 
+                    )
+                )
+        energy, nu, r = sorted(optimizer_output, key=lambda x:x[0])[0]
 
         return energy, np.array(nu), np.array(r)
 
@@ -310,6 +316,3 @@ class cs_vqe(S3_projection):
             print('Multiple eigenstates found:', reduced_eigenstates)
         
         return reduced_eigenstates[0]
-        
-
-

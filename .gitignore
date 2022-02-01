@@ -128,6 +128,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Chemistry things
+# extra things
 *.hdf5
 sandbox.ipynb
+tmp*
+data/*
