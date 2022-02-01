@@ -1,5 +1,6 @@
 from qreduce.S3_projection import S3_projection
 from qreduce.utils.QubitOp import QubitOp
+from qreduce.utils.hypermapper_tools import hypermapper_specs
 from qreduce.utils.operator_toolkit import *
 from qreduce.utils.symplectic_toolkit import *
 from qreduce.utils.cs_vqe_tools_legacy import (greedy_dfs,to_indep_set,quasi_model)
@@ -33,8 +34,12 @@ class cs_vqe(S3_projection):
                 noncontextual_set: List[str] = None,
                 single_pauli: str = 'Z'
                 ) -> None:
+        """ Input a Hamiltonian in the dictionary representation and, optionally, a noncontextual 
+        subset of Pauli terms (if not supplied then find_noncontextual_set() will be called.)
+        There is freedom over the choice of single Pauli operator we wish to rotate onto, however 
+        this is set to Z by default (in line with the original CS-VQE paper).
         """
-        """
+        # Hamiltonian and noncontextual model
         self.hamiltonian = QubitOp(hamiltonian)
         self.n_qubits = self.hamiltonian.n_qbits
         self.single_pauli = single_pauli
@@ -46,12 +51,15 @@ class cs_vqe(S3_projection):
                                             if op in self.noncontextual_set})
         self.generators, self.cliquereps = self.independent_generators()
 
+        # noncontextual ground state
         self.objfncprms = self.classical_obj_fnc_params(
             G=self.generators, C=self.cliquereps
         )
         self.ngs_energy, self.nu, self.r = self.find_noncontextual_ground_state()
         self.anti_clique_operator = {C: val for C,
                                      val in zip(self.cliquereps, self.r)}
+
+        # stabilizer rotations
         Q, t = self.unitary_partitioning_rotation()
         self.unitary_partitioning = (Q, t, False)
         clique_rot = rotate_operator(self.anti_clique_operator,[self.unitary_partitioning])
@@ -62,8 +70,8 @@ class cs_vqe(S3_projection):
         self.nu = np.insert(self.nu, 0, C_eigval)
         
 
-    def find_noncontextual_set(self, search_time=10):
-        """Method for extracting a noncontextual subset of the hamiltonian terms
+    def find_noncontextual_set(self, search_time=10) -> List[str]:
+        """ Method for extracting a noncontextual subset of the hamiltonian terms
         """
         # for now uses the legacy greedy DFS approach
         # to be updated once more efficient/effective methods are identified
@@ -72,10 +80,13 @@ class cs_vqe(S3_projection):
         return noncontextual_set
 
 
-    def independent_generators(self):
-        """ 
-        Find independent generating set for noncontextual symmetry
-        and clique representatives for the anticommuting part
+    def independent_generators(self) -> List[str]:
+        """ Find independent generating set for noncontextual symmetry and clique representatives 
+        for the anticommuting part. Does so in the symplectic representation:
+
+        1. obtains row-reduced form of flipped symplectic matrix [Z|X],
+        2. determines a basis for the kernel of the above (these are the symmetry generators),
+        3. the remaining rows of the row-reduced matrix form a basis for the anticommuting cliques
         """
 
         # find symmetry generators
@@ -119,7 +130,10 @@ class cs_vqe(S3_projection):
         return generators, cliquereps
 
 
-    def classical_obj_fnc_params(self, G: List[str], C: List[str]):
+    def classical_obj_fnc_params(self, 
+                                G: List[str], 
+                                C: List[str]
+                                ) -> List[Tuple[float, List[int], List[float]]]:
         """Sums over the completion (under Pauli multiplication) of G and
         extracts the non-zero Hamiltonian contributions. For each term we 
         also list the indices of the generators used in its construction. 
@@ -162,9 +176,12 @@ class cs_vqe(S3_projection):
         return obj_fnc_params
 
     
-    def classical_obj_fnc(self, input_params):
-        """ Noncontextual ground state energy objective function
-        Built from the data generated in classical_obj_fnc_params
+    def classical_obj_fnc(self, input_params: Dict) -> float:
+        """ Noncontextual ground state energy objective function:
+        built from the data generated in classical_obj_fnc_params
+
+        input_params is a dictionary of cofspecs required by 
+        HyperMapper (defined in find_noncontextual_ground_state).
         """
         t = input_params['theta'] #parametrizes the r unit vector
     
@@ -176,42 +193,30 @@ class cs_vqe(S3_projection):
         return objfnc_sum
 
 
-    def find_noncontextual_ground_state(self):
-        """ Uses hypermapper to perform discrete optimization over the
+    def find_noncontextual_ground_state(self, 
+                                        ref_energy:float = None
+                                        ) -> Tuple[float, List[int], List[float]]:
+        """ Uses HyperMapper to perform discrete optimization over the
         generator eigenvalue assingments q_i and the continuous r unit
         vector specifying weights of anticommuting clique contributions.
 
-        Writes results to a .csv file
+        HyperMapper writes results to a .csv file that we read back in
+        for use elsewhere in the cs_vqe class.
+
+        ref_energy allows one to specify a known ground state energy 
+        approximation (e.g. Hartree-Fock) as a benchmark for HyperMapper.
         """
-        # classical objective function general hypermapper optimizer specs
-        output_directory = "ngs_optimization"
-        cofspecs = {}
-        cofspecs["run_directory"] = "data"
-        cofspecs["application_name"] = output_directory
-        cofspecs["log_file"] = "hypermapper_logfile.log"
-        cofspecs["optimization_objectives"] = ["objfnc_sum"]
-        #cofspecs["print_best"] = False
-        cofspecs["models"] = {"model": "gaussian_process"} #"random_forest"
-
-        # set the optimization variable parameters
-        q_vars = [f'q{i}' for i in range(len(self.generators))]
-        cofspecs["input_parameters"] = {}
-        for var in q_vars:
-            cofspecs["input_parameters"][var] = {   "parameter_type": 'ordinal',
-                                                    "values": [-1, +1]}
-        cofspecs["input_parameters"]['theta'] = {   "parameter_type": 'real',
-                                                    "values": [-np.pi, +np.pi]}
-            
-        with open("data/ngs_calculator.json", "w") as cofspecs_file:
-            json.dump(cofspecs, cofspecs_file, indent=4)
-
-        stdout = sys.stdout # Jupyter uses a special stdout and HyperMapper logging overwrites it. Save stdout to restore later
-        # Call HyperMapper to optimize the classical objective function for determining the NGS
-        optimizer.optimize("data/ngs_calculator.json", self.classical_obj_fnc)
+        # write HyperMapper specs to file data/ngs_calculator.json
+        hypermapper_specs(len(self.generators))
+        # Jupyter uses a special stdout and HyperMapper logging overwrites it.
+        stdout = sys.stdout
+        # Call HyperMapper to optimize the noncontextual energy objective function
+        optimizer.optimize("data/hypermapper/ngs_calculator.json", self.classical_obj_fnc)
+        # restore stdout for use in Jupyter
         sys.stdout = stdout
 
         optimizer_output=[]
-        with open("data/"+output_directory+"_output_samples.csv", newline='') as csvfile:
+        with open("data/hypermapper/ngs_optimization_output_samples.csv", newline='') as csvfile:
             reader = csv.DictReader(csvfile)
             # read in the optimizer output as (energy, G assignment, r vector)
             for opt_guess in reader:
@@ -219,7 +224,7 @@ class cs_vqe(S3_projection):
                 optimizer_output.append(
                     (
                         float(opt_guess['objfnc_sum']),
-                        [int(opt_guess[q_i]) for q_i in q_vars], 
+                        [int(opt_guess[f'q{i}']) for i in range(len(self.generators))], 
                         [np.sin(t), np.cos(t)] 
                     )
                 )
@@ -311,6 +316,3 @@ class cs_vqe(S3_projection):
             print('Multiple eigenstates found:', reduced_eigenstates)
         
         return reduced_eigenstates[0]
-        
-
-
