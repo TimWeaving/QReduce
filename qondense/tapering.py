@@ -95,6 +95,19 @@ class tapering(S3_projection):
         return tapered_operator
 
 
+    def taper_ref_state(self) -> List[int]:
+        """ taper the reference state by dropping the qubit positions
+        projected during the perform_projection method
+        """
+        # require perform_projection to have been called so that 
+        # stab_index_eigval is defined:
+        self.perform_projection(self.hamiltonian)
+        taper_qubits= list(self.stab_index_eigval.keys())
+        tapered_ref_state = [bit for index,bit in enumerate(self.ref_state) 
+                                    if index not in taper_qubits]
+        return tapered_ref_state
+        
+        
     def search_all_sectors(self):
         """ Hartree-Fock does not always identify the sector in which 
         the correct ground state energy resides... for this reason,
