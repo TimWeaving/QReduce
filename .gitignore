@@ -133,3 +133,4 @@ dmypy.json
 sandbox.ipynb
 tmp*
 data/*
+plotting.ipynb

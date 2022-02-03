@@ -89,6 +89,8 @@ class tapering(S3_projection):
         """                     
         if operator is None:
             operator = self.hamiltonian
+        elif operator is not None and type(operator)==dict:
+            operator = QubitOp(operator)
         
         tapered_operator = self.perform_projection(operator)
         
@@ -103,6 +105,7 @@ class tapering(S3_projection):
         # stab_index_eigval is defined:
         self.perform_projection(self.hamiltonian)
         taper_qubits= list(self.stab_index_eigval.keys())
+        print(taper_qubits)
         tapered_ref_state = [bit for index,bit in enumerate(self.ref_state) 
                                     if index not in taper_qubits]
         return tapered_ref_state

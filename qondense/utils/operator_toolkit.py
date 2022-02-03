@@ -183,7 +183,7 @@ def measure_operator(pauli, ref_state):
     return outcome
 
 
-def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
+def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse', initial_guess=None
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state
     vector for the input operator
@@ -192,7 +192,7 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
     if matrix_type=='sparse':
         ham_of = qonvert.dict_to_QubitOperator(operator)
         ham_sparse = get_sparse_operator(ham_of)
-        ground_energy, ground_state = get_ground_state(ham_sparse)
+        ground_energy, ground_state = get_ground_state(ham_sparse, initial_guess=initial_guess)
     elif matrix_type=='dense':
         ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
         eigvals, eigvecs = np.linalg.eigh(ham_mat)
