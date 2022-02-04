@@ -172,7 +172,18 @@ def amend_string_index( string:Union[str,list],
     return ''.join(listed)
 
 
-def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
+def measure_operator(pauli, ref_state):
+    """ Measure a single Pauli operator in a single basis state
+    """
+    outcome=+1
+    assert(len(pauli)==len(ref_state))
+    for P,bit in zip(pauli, ref_state):
+        if P=='Z' and bit==1:
+            outcome*=-1
+    return outcome
+
+
+def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse', initial_guess=None
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state
     vector for the input operator
@@ -181,7 +192,7 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse'
     if matrix_type=='sparse':
         ham_of = qonvert.dict_to_QubitOperator(operator)
         ham_sparse = get_sparse_operator(ham_of)
-        ground_energy, ground_state = get_ground_state(ham_sparse)
+        ground_energy, ground_state = get_ground_state(ham_sparse, initial_guess=initial_guess)
     elif matrix_type=='dense':
         ham_mat = sum(coeff * pauli_matrix(op) for op, coeff in operator.items())
         eigvals, eigvecs = np.linalg.eigh(ham_mat)

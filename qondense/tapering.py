@@ -1,6 +1,6 @@
 from qondense.S3_projection import S3_projection
 from qondense.utils.QubitOp import QubitOp
-from qondense.utils.operator_toolkit import exact_gs_energy
+from qondense.utils.operator_toolkit import exact_gs_energy, measure_operator
 from qondense.utils.symplectic_toolkit import *
 from itertools import product
 from typing import Dict
@@ -60,16 +60,8 @@ class tapering(S3_projection):
         """ Given the specified reference state, determine the
         correspinding sector by measuring the symmetry generators
         """
-        def measure_operator(op):
-            outcome=+1
-            assert(len(op)==len(self.ref_state))
-            for P,bit in zip(op, self.ref_state):
-                if P=='Z' and bit==1:
-                    outcome*=-1
-            return outcome
-
-        sector = [measure_operator(op) for op in self.symmetry_ops]
-
+        sector = [measure_operator(pauli, self.ref_state) 
+                    for pauli in self.symmetry_ops]
         return sector
 
 
@@ -97,12 +89,27 @@ class tapering(S3_projection):
         """                     
         if operator is None:
             operator = self.hamiltonian
+        elif operator is not None and type(operator)==dict:
+            operator = QubitOp(operator)
         
         tapered_operator = self.perform_projection(operator)
         
         return tapered_operator
 
 
+    def taper_ref_state(self) -> List[int]:
+        """ taper the reference state by dropping the qubit positions
+        projected during the perform_projection method
+        """
+        # require perform_projection to have been called so that 
+        # stab_index_eigval is defined:
+        self.perform_projection(self.hamiltonian)
+        taper_qubits= list(self.stab_index_eigval.keys())
+        tapered_ref_state = [bit for index,bit in enumerate(self.ref_state) 
+                                    if index not in taper_qubits]
+        return tapered_ref_state
+        
+        
     def search_all_sectors(self):
         """ Hartree-Fock does not always identify the sector in which 
         the correct ground state energy resides... for this reason,

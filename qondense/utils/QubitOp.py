@@ -50,6 +50,21 @@ class QubitOp:
             return ZX # QubitOp(swap_op)
 
 
+    def basis_reconstruction(self, operator_basis: List[str]) -> np.array:
+        """ simultaneously reconstruct every operator term in the supplied basis.
+        Performs Gaussian elimination on [op_basis.T | self_symp.T] and restricts 
+        so that the row-reduced identity block is removed. Each row of the
+        resulting matrix will index the basis elements required to reconstruct
+        the corresponding term in the operator.
+        """
+        dim = len(operator_basis)
+        basis_symp = QubitOp(operator_basis)._symp
+        basis_op_stack = np.vstack([basis_symp, self._symp])
+        ham_reconstruction = gf2_gaus_elim(basis_op_stack.T)[:dim,dim:].T
+
+        return ham_reconstruction
+
+
     def adjacency_matrix(self):
         """
         """
