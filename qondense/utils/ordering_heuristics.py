@@ -33,7 +33,8 @@ class ordering_heuristics(cs_vqe):
         self.fci_energy = calculated_molecule.fci_energy
         print(f'Hartree-Fock energy   = {self.hf_energy: .8f}')
         print(f'Møller–Plesset energy = {self.mp_energy: .8f}')
-        print(f'FCI energy            = {self.fci_energy:.8f}')
+        if self.fci_energy is not None:
+            print(f'FCI energy            = {self.fci_energy:.8f}')
         print(dashes)
         
         # Hamiltonian
