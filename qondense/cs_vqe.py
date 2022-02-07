@@ -1,10 +1,10 @@
 from qondense.S3_projection import S3_projection
 from qondense.utils.QubitOp import QubitOp
-from qondense.utils.hypermapper_tools import hypermapper_specs
+#from qondense.utils.hypermapper_tools import hypermapper_specs
 from qondense.utils.operator_toolkit import *
 from qondense.utils.symplectic_toolkit import *
 from qondense.utils.cs_vqe_tools_legacy import (greedy_dfs,to_indep_set,quasi_model)
-from hypermapper import optimizer
+#from hypermapper import optimizer
 from scipy.optimize import minimize_scalar
 
 # general imports

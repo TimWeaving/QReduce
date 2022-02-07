@@ -1,4 +1,5 @@
 import numpy as np
+from copy import deepcopy
 from qondense.cs_vqe import cs_vqe
 from typing import Dict, List
 from openfermion import get_fermion_operator, jordan_wigner, FermionOperator
@@ -162,16 +163,18 @@ class ordering_heuristics(cs_vqe):
         used = []
         for pauli, coeff in ham_ordering:
             # index qubit positions of X,Y paulis
-            off_diag = [index for index,Pi in enumerate(pauli) if Pi not in ['I', 'Z']]
+            relax_G_indices = [index for index,Pi in enumerate(pauli) if Pi not in ['I', 'Z']]
+            #relax_G_indices = [index for index,G in enumerate(self.generators) 
+            #                        if 'Z' in [G[i] for i in off_diag]]
             # set difference with those already included
-            off_diag = list(set(off_diag)-set(used))
-            if off_diag != []:
-                order.append(off_diag)
-                used += off_diag
+            relax_G_indices = list(set(relax_G_indices)-set(used))
+            if relax_G_indices != []:
+                used += relax_G_indices
                 used = list(set(used))
-
-        flat_order = [item for sublist in order for item in sublist]
-        stab_order = [list(set(range(self.n_qubits))-set(flat_order[:i])) for i in range(1,self.n_qubits)]
+                order.append(deepcopy(used))
+                
+        stab_order = [list(set(range(self.n_qubits))-set(o)) for o in order if set(o)!=set(range(self.n_qubits))]
+        
         return stab_order
 
 
@@ -246,13 +249,15 @@ class ordering_heuristics(cs_vqe):
         stab_order = heuristics[heuristic]["func"]()
         for o in stab_order:
             num_sim_q = self.n_qubits-len(o)
-            if num_sim_q <=15:
+            if num_sim_q <=18:
                 if num_sim_q < 5:
                     m_type='dense'
                 else:
                     m_type='sparse'
+                ngs = ''.join([str(self.hf_tapered[i]) for i in range(self.n_qubits) if i not in o])
+                ngs = np.eye(1,2**num_sim_q,int(ngs, 2))
                 ham_cs = self.contextual_subspace_hamiltonian(stabilizer_indices=o)
-                best_energy, cs_vector = exact_gs_energy(ham_cs, matrix_type=m_type)
+                best_energy, cs_vector = exact_gs_energy(ham_cs, matrix_type=m_type, initial_guess=ngs)
                 if print_info:
                     print(f'Number of qubits simulated: {num_sim_q}')
                     print(f'CS-VQE error w.r.t. HF energy: {best_energy-self.hf_energy: .10f}')

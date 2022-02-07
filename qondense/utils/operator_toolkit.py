@@ -5,7 +5,8 @@ from matplotlib import pyplot as plt
 from itertools import permutations, product
 from qondense.utils.symplectic_toolkit import *
 import qondense.utils.qonversion_tools as qonvert
-from openfermion.linalg import get_sparse_operator,get_ground_state
+from openfermion.linalg import get_sparse_operator#,get_ground_state
+import scipy
 plt.style.use('ggplot')
 
 
@@ -183,6 +184,33 @@ def measure_operator(pauli, ref_state):
     return outcome
 
 
+def get_ground_state(sparse_operator, initial_guess=None):
+    """Compute lowest eigenvalue and eigenstate.
+    Args:
+        sparse_operator (LinearOperator): Operator to find the ground state of.
+        initial_guess (ndarray): Initial guess for ground state.  A good
+            guess dramatically reduces the cost required to converge.
+    Returns
+    -------
+        eigenvalue:
+            The lowest eigenvalue, a float.
+        eigenstate:
+            The lowest eigenstate in scipy.sparse csc format.
+    """
+    values, vectors = scipy.sparse.linalg.eigsh(sparse_operator,
+                                                k=1,
+                                                v0=initial_guess,
+                                                which='SA',
+                                                maxiter=1e7)
+
+    order = np.argsort(values)
+    values = values[order]
+    vectors = vectors[:, order]
+    eigenvalue = values[0]
+    eigenstate = vectors[:, 0]
+    return eigenvalue, eigenstate.T
+
+
 def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse', initial_guess=None
                     ) -> Tuple[float, np.array]:
     """ Return the ground state energy and corresponding ground state
@@ -201,6 +229,9 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse', initial_gue
         raise ValueError('Accepted values for matrix_type are sparse or dense')
 
     return ground_energy, np.array(ground_state)
+
+
+
 
 
 def plot_ground_state_amplitudes(operator: Dict[str, float], 
