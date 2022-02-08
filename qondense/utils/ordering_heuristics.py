@@ -29,13 +29,17 @@ class ordering_heuristics(cs_vqe):
         print(f'The Hartree-Fock state is |{hf_string}>')
         
         # reference energies
-        self.hf_energy = calculated_molecule.hf_energy
-        self.mp_energy = calculated_molecule.mp2_energy
+        self.hf_energy  = calculated_molecule.hf_energy
+        self.mp_energy  = calculated_molecule.mp2_energy
+        self.cisd_energy= calculated_molecule.cisd_energy
+        self.ccsd_energy= calculated_molecule.ccsd_energy
         self.fci_energy = calculated_molecule.fci_energy
-        print(f'Hartree-Fock energy   = {self.hf_energy: .8f}')
-        print(f'Møller–Plesset energy = {self.mp_energy: .8f}')
+        print(f'HF   energy = {self.hf_energy: .8f}') #Hartree-Fock
+        print(f'MP2  energy = {self.mp_energy: .8f}') #Møller–Plesset
+        print(f'CISD energy = {self.cisd_energy: .8f}')
+        print(f'CCSD energy = {self.ccsd_energy: .8f}')
         if self.fci_energy is not None:
-            print(f'FCI energy            = {self.fci_energy:.8f}')
+            print(f'FCI energy  = {self.fci_energy:.8f}')
         print(dashes)
         
         # Hamiltonian
@@ -63,6 +67,11 @@ class ordering_heuristics(cs_vqe):
 
         # build CS-VQE model
         terms_noncon = [op for op in self.ham_tap._dict if set(op) in [{'I'},{'Z'},{'I','Z'}]]
+        for op, coeff in sorted(self.ham_tap._dict.items(), key=lambda x:-abs(x[1])):
+            distinct_paulis = list(set(op))
+            if 'X' in distinct_paulis or 'Y' in distinct_paulis:
+                terms_noncon.append(op)
+                break
         super().__init__(hamiltonian=self.ham_tap._dict,
                         noncontextual_set=terms_noncon,
                         ref_state=self.hf_tapered)
@@ -249,7 +258,7 @@ class ordering_heuristics(cs_vqe):
         stab_order = heuristics[heuristic]["func"]()
         for o in stab_order:
             num_sim_q = self.n_qubits-len(o)
-            if num_sim_q <=18:
+            if num_sim_q <=15:
                 if num_sim_q < 5:
                     m_type='dense'
                 else:
@@ -260,10 +269,13 @@ class ordering_heuristics(cs_vqe):
                 best_energy, cs_vector = exact_gs_energy(ham_cs, matrix_type=m_type, initial_guess=ngs)
                 if print_info:
                     print(f'Number of qubits simulated: {num_sim_q}')
-                    print(f'CS-VQE error w.r.t. HF energy: {best_energy-self.hf_energy: .10f}')
-                    print(f'CS-VQE error w.r.t. MP2 energy:{best_energy-self.mp_energy: .10f}')
+                    print(f'CS-VQE error w.r.t. HF energy:  {best_energy-self.hf_energy: .10f}')
+                    print(f'CS-VQE error w.r.t. MP2 energy: {best_energy-self.mp_energy: .10f}')
+                    print(f'CS-VQE error w.r.t. CISD energy:{best_energy-self.cisd_energy: .10f}')
+                    print(f'CS-VQE error w.r.t. CCSD energy:{best_energy-self.ccsd_energy: .10f}')
+                    
                     if self.fci_energy is not None:
-                        print(f'CS-VQE error w.r.t. FCI energy:{best_energy-self.fci_energy: .10f}')
+                        print(f'CS-VQE error w.r.t. FCI energy: {best_energy-self.fci_energy: .10f}')
                     print()
 
                 optimal_energy[num_sim_q]={}
