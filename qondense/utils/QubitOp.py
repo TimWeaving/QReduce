@@ -1,5 +1,6 @@
 from qondense.utils.symplectic_toolkit import *
 from copy import deepcopy
+from typing import Union
 
 class QubitOp:
 
@@ -38,6 +39,12 @@ class QubitOp:
         self._symp, self.cfvec = symplectic_operator(operator)
 
 
+    def copy(self):
+        """ Create a carbon copy of the class instance
+        """
+        return deepcopy(self)
+
+
     def swap_XZ_blocks(self):
             """ Reverse order of symplectic matrix so that 
             Z operators are on the left and X on the right
@@ -71,11 +78,26 @@ class QubitOp:
         return (self._symp @ self.symform @ self._symp.T) % 2
 
 
-    def commuting(self, P):
+    def commutes_with(self, check_paulis: Union[str, List[str], np.array]):
         """
         """
-        P_symp = pauli_to_symplectic(P)
-        return (self._symp @ self.symform @ P_symp.T) % 2
+        if type(check_paulis)==str:
+            check_paulis = [check_paulis]
+        if type(check_paulis) == list:
+            check_paulis = build_symplectic_matrix(check_paulis)
+        return (self._symp @ self.symform @ check_paulis.T) % 2
+
+
+    def signless_rotation(self, pauli_rotation):
+        """
+        """
+        if type(pauli_rotation)==str:
+            pauli_rotation = pauli_to_symplectic(pauli_rotation)
+        MWvT = self.commutes_with(pauli_rotation)
+        MWvT_v = np.outer(MWvT, pauli_rotation)
+        rotated = (self._symp + MWvT_v)%2
+        op_out = dictionary_operator(rotated, self.cfvec)
+        return QubitOp(op_out)
 
 
     def phases_by_term(self, P:str, apply_on='left'):
@@ -143,7 +165,7 @@ class QubitOp:
                             )->Dict[str, float]:
 
         pauli_rot_symp = pauli_to_symplectic(pauli_rot)
-        commuting = self.commuting(pauli_rot) #(self._symp @ self.symform @ pauli_rot_symp.T) % 2
+        commuting = self.commutes_with(pauli_rot) #(self._symp @ self.symform @ pauli_rot_symp.T) % 2
 
         I = np.eye(2*self.n_qbits, 2*self.n_qbits)
         OmegaPtxP = np.outer(self.symform @ pauli_rot_symp.T, pauli_rot_symp)
@@ -171,9 +193,8 @@ class QubitOp:
 
             non_cliff_op = np.concatenate((sin_op_part, cos_op_part))
             non_cliff_cf = np.concatenate((sin_cf_part, cos_cf_part))
-            non_cliff_op, non_cliff_cf = cleanup_symplectic(non_cliff_op, non_cliff_cf)
-
-        op_out = dictionary_operator(non_cliff_op, non_cliff_cf)
+            simplified = cleanup_symplectic(non_cliff_op, non_cliff_cf)
+            op_out = dictionary_operator(*simplified)
 
         return op_out
 

@@ -48,8 +48,7 @@ class cs_vqe(S3_projection):
             self.noncontextual_set = noncontextual_set
         else:
             self.noncontextual_set = self.find_noncontextual_set()
-        self.ham_noncontextual = QubitOp({op:coeff for op,coeff in self.hamiltonian._dict.items() 
-                                            if op in self.noncontextual_set})
+        self.ham_noncontextual = QubitOp({op:hamiltonian[op] for op in self.noncontextual_set[::-1]})
         #self.generators, self.cliquereps = self.independent_generators()
         self.generators, self.cliquereps, construction = quasi_model(self.ham_noncontextual._dict)
         # noncontextual ground state
@@ -202,6 +201,8 @@ class cs_vqe(S3_projection):
         q_vars = [f'q{i}' for i in range(len(self.generators))]
 
         if hypermapper:
+            raise ImportError('Hypermapper is currently not being imported'+
+                                'due to incompatibility with pyplot')
             # write HyperMapper specs to file data/ngs_calculator.json
             hypermapper_specs(q_vars)
             # Jupyter uses a special stdout and HyperMapper logging overwrites it.
@@ -266,7 +267,8 @@ class cs_vqe(S3_projection):
           
     def _contextual_subspace_projection(self,   
                                         operator:QubitOp,
-                                        stabilizer_indices:List[int] = None
+                                        stabilizer_indices:List[int],
+                                        projection_qubits: List[int] = None
                                         ) -> QubitOp:
         """ Returns the restriction of an operator to the contextual subspace 
         defined by a projection over stabilizers corresponing with stabilizer_indices
@@ -277,33 +279,39 @@ class cs_vqe(S3_projection):
         # Now invoke the stabilizer subspace projection class methods given the chosen
         # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
         super().__init__(
-                        stabilizers = stabilizers, 
-                        eigenvalues = eigenvalues, 
-                        single_pauli= self.single_pauli
-                        )
+            stabilizers  = stabilizers, 
+            eigenvalues  = eigenvalues, 
+            single_pauli = self.single_pauli,
+            sqp_override = projection_qubits
+        )
 
+        insert_rotation=None
         if 0 in stabilizer_indices:
             # Note element 0 is always the anticommuting clique operator, hence in this case
             # we need to insert the unitary partitioning rotations before applying the
             # remaining stabilizer rotations determined by S3_projection
-            operator_cs = self.perform_projection(
-                operator=operator,
-                insert_rotation = self.unitary_partitioning
-            )
-        else:
-            operator_cs = self.perform_projection(operator=operator)
+            insert_rotation = self.unitary_partitioning
 
+        operator_cs = self.perform_projection(
+            operator        = operator,
+            insert_rotation = insert_rotation
+        )  
+            
         return operator_cs
 
 
     def contextual_subspace_hamiltonian(self,
-                                        stabilizer_indices:List[int]
+                                        stabilizer_indices:List[int],
+                                        projection_qubits: List[int] = None
                                         ) -> Dict[str,float]:
         """ Construct and return the CS-VQE Hamiltonian for the stabilizers
         corresponding with stabilizer_indices
         """
-        ham_cs = self._contextual_subspace_projection(operator=self.hamiltonian,
-                                                    stabilizer_indices=stabilizer_indices)
+        ham_cs = self._contextual_subspace_projection(
+            operator           = self.hamiltonian,
+            stabilizer_indices = stabilizer_indices,
+            projection_qubits  = projection_qubits
+        )
 
         return cleanup_operator(ham_cs._dict, threshold=8)
 

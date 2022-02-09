@@ -67,11 +67,11 @@ class ordering_heuristics(cs_vqe):
 
         # build CS-VQE model
         terms_noncon = [op for op in self.ham_tap._dict if set(op) in [{'I'},{'Z'},{'I','Z'}]]
-        for op, coeff in sorted(self.ham_tap._dict.items(), key=lambda x:-abs(x[1])):
-            distinct_paulis = list(set(op))
-            if 'X' in distinct_paulis or 'Y' in distinct_paulis:
-                terms_noncon.append(op)
-                break
+        #for op, coeff in sorted(self.ham_tap._dict.items(), key=lambda x:-abs(x[1])):
+        #    distinct_paulis = list(set(op))
+        #    if 'X' in distinct_paulis or 'Y' in distinct_paulis:
+        #        terms_noncon.append(op)
+        #        break
         super().__init__(hamiltonian=self.ham_tap._dict,
                         noncontextual_set=terms_noncon,
                         ref_state=self.hf_tapered)
@@ -131,6 +131,9 @@ class ordering_heuristics(cs_vqe):
     ###############################################
     # heuristics with HOMO-LUMO as starting point #
     ###############################################
+
+
+
 
     def HOMO_LUMO_outwards(self):
         """

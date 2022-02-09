@@ -7,16 +7,17 @@ from copy import deepcopy
 
 class S3_projection:
     def __init__(self,
-                stabilizers: List[str], 
-                eigenvalues: List[int],
+                stabilizers:  List[str], 
+                eigenvalues:  List[int],
                 single_pauli: str,
+                sqp_override: List[int] = None
                 ) -> None:
         """
         """
         self.n_qubits = number_of_qubits(stabilizers)
 
         # check the stabilizers are independent:
-        check_independent = gf2_gaus_elim(build_symplectic_matrix(stabilizers))
+        check_independent = gf2_gaus_elim(QubitOp(stabilizers)._symp)
         for row in check_independent:
             if np.all(row==0):
                 raise ValueError('The supplied stabilizers are not independent')
@@ -27,6 +28,9 @@ class S3_projection:
         self.stab_eigval = QubitOp({S:eigval for S,eigval 
                                     in zip(stabilizers, eigenvalues)})
         self.single_pauli= single_pauli
+        if sqp_override is None:
+            sqp_override = [None for S in stabilizers]
+        self.sqp_override = sqp_override
         
 
     def stabilizer_rotations(self):
@@ -39,71 +43,44 @@ class S3_projection:
         
         - a dictionary of qubit positions that we have rotated onto and 
           the eigenvalues post-rotation
-        
-        TODO - this method could definitely be more elegant!
         """
-
-        single_pauli_map = {'X':{1:'Z', 2:'Y'},
-                            'Y':{1:'X', 2:'Z'},
-                            'Z':{1:'Y', 2:'X'}}
-
-        def amend_string_index( string:Union[str,list], 
-                        index:int, character:str
-                        )->str:
-            """Update a string at a given index with some character 
-            """
-            listed = list(deepcopy(string))
-            listed[index] = character
-            return ''.join(listed)
-        
-        
-        used_qubits = []
-        rotations = []
-        
-        for S in self.stabilizers:
-            # perform the current list of rotations 
-            # (since each rotation is dependent on those preceeding it)
-            S_rot = list(QubitOp({S:1}).perform_rotations(rotations)._dict.keys())[0]
-
-            # check if the stabilizer is already a single Pauli operator
-            if S.count(self.single_pauli)!=1:
-                # Check if diagonal with respect to single_pauli
-                if set(S_rot) in [{self.single_pauli},{'I',self.single_pauli}]:
-                    # identify a qubit position that is available for rotation onto
-                    potential_single_pauli_indices = [i for i,Si in enumerate(S_rot) if
-                                            Si==self.single_pauli and i not in used_qubits]
-                    single_pauli_index = potential_single_pauli_indices[0]
-                    # this defines corresponding rotations (see link to paper above)
-                    rot_op = amend_string_index(['I' for i in range(self.n_qubits)],
-                                                single_pauli_index,
-                                                single_pauli_map[self.single_pauli][1])
-                    S_offdiag = amend_string_index(S_rot,
-                                                single_pauli_index,
-                                                single_pauli_map[self.single_pauli][2])
-                    rotations.append((rot_op, np.pi/2, True))
-                    # now the stabilizer is non-diagonal!
-                else:
-                    # for non-diagonal stabilizer:
-                    S_offdiag = deepcopy(S_rot)
-                    single_pauli_index = [i for i,Si in enumerate(S_offdiag) if 
-                                Si not in ['I',self.single_pauli] and i not in used_qubits][0]
-
-                # rotation for non-diagonal stabilizer (wrt to chosen single_pauli) onto single Pauli operator
-                if S_offdiag[single_pauli_index] == single_pauli_map[self.single_pauli][2]:
-                    rot_op = amend_string_index(S_offdiag,
-                                                single_pauli_index,
-                                                single_pauli_map[self.single_pauli][1])
-                else:
-                    rot_op = amend_string_index(S_offdiag,
-                                                single_pauli_index,
-                                                single_pauli_map[self.single_pauli][2])
-                rotations.append((rot_op, np.pi/2, True))
-            else:
-                single_pauli_index = S_rot.index(self.single_pauli)
-            
-            # append to used_qubits the qubit index onto which we rotated 
-            # so that it cannot be used for subsequent stabilizers
-            used_qubits.append(single_pauli_index)
+        stabilizer_ref = self.stab_eigval.copy()
+        sqpZ_check = stabilizer_ref._symp[:,self.n_qubits:]
+        rotations  = []
+        while ~np.all(np.count_nonzero(stabilizer_ref._symp.T, axis=0)==1):
+            unique_position = np.where(np.count_nonzero(stabilizer_ref._symp, axis=0)==1)[0]
+            reduced = stabilizer_ref._symp[:,unique_position]
+            unique_stabilizer = np.where(np.any(reduced, axis=1))
+            for row,sqp_check_row in zip(stabilizer_ref._symp[unique_stabilizer,:][0], 
+                                        sqpZ_check[unique_stabilizer, :][0]):
+                # find the free indices and pick one (there is some freedom over this)
+                available_positions = np.intersect1d(unique_position, np.where(row))
+                sqp_index = available_positions[0]
+                # check if already single Pauli X or Z
+                if np.count_nonzero(sqp_check_row) != 1:
+                    # check if diagonal
+                    if np.all(row[:self.n_qubits]==0) and self.single_pauli == 'Z':
+                        # define pauli that rotates off-diagonal
+                        pauli_rotation = np.zeros(2*self.n_qubits)
+                        pauli_rotation[sqp_index]=1
+                        pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
+                        rotations.append(pauli_from_symplectic(pauli_rotation))
+                        stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
+                    # pauli rotation mapping to a single-qubit Pauli operator
+                    pauli_rotation=row.copy()
+                    pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
+                    rotations.append(pauli_from_symplectic(pauli_rotation))
+                    stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
+            sqpZ_check = stabilizer_ref._symp[:,self.n_qubits:]
+        # there might be one left over at this point
+        if self.single_pauli=='X' and ~np.all(sqpZ_check==0):
+            for row in stabilizer_ref._symp[np.where(np.any(sqpZ_check==1, axis=1))]:
+                pauli_rotation = row.copy()
+                sqp_index = np.where(pauli_rotation)
+                pauli_rotation[(sqp_index[0]+self.n_qubits)%self.n_qubits]=1
+                rotations.append(pauli_from_symplectic(pauli_rotation))
+                stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
+        rotations = [(rot_op, np.pi/2, True) for rot_op in rotations]
 
         # perform the full list of rotations to obtain the new eigenvalues
         rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict
@@ -114,39 +91,52 @@ class S3_projection:
 
 
     def _perform_projection(self, 
-                        operator: Dict[str, float],  
+                        operator: QubitOp,  
                         q_sector: Dict[int, int],
                         ) -> Dict[str, float]:
         """ 
         method for projecting an operator over fixed qubit positions stabilized 
         by single Pauli operators (obtained via Clifford operations)
-
-        TODO update method to work with symplectic representation
         """
-        # qubits for projection must be ordered
-        stab_q, sector = zip(*sorted(q_sector.items(), key=lambda x:x[0]))
-        operator_proj = {}
-        for pauli in operator:
-            # split the Pauli string in accordance with the 
-            # projected qubits and those we wish to simulate
-            pauli_stab = "".join([pauli[i] for i in stab_q])
-            pauli_free = "".join([pauli[i] for i in range(self.n_qubits) if i not in stab_q])
-            
-            # keep only the terms for which the stabilized qubit positions are diagonal (wrt single_pauli)
-            if set(pauli_stab) in [{"I"}, {self.single_pauli}, {"I", self.single_pauli}]:
-                # update the sign according to the stabilizer eigenvalues
-                sign = np.prod(
-                    [eigval for eigval,stab in zip(sector, pauli_stab) if stab == self.single_pauli]
-                )
-                # append simulated part to the projected operator
-                if pauli_free not in operator_proj:
-                    operator_proj[pauli_free] = sign * operator[pauli]
-                else:
-                    operator_proj[pauli_free] += sign * operator[pauli]
+        stab_qubits,eigval = zip(*self.stab_index_eigval.items())
+        stab_qubits,eigval = np.array(stab_qubits),np.array(eigval)
+        
+        # pick out relevant element of symplectic for single Pauli X or Z
+        stab_qubits_ref = stab_qubits.copy()
+        if self.single_pauli=='Z':
+            stab_qubits_ref += self.n_qubits
 
-        return operator_proj
+        # build the single-qubits Paulis the stabilizers are rotated onto
+        single_qubit_paulis = np.vstack([np.eye(1, 2*self.n_qubits, q_pos) 
+                                        for q_pos in stab_qubits_ref])
+
+        # remove terms that do not commute with the rotated stabilizers
+        commute_with_stabilizers = operator.commutes_with(single_qubit_paulis)==0
+        op_anticommuting_removed = operator._symp[np.all(commute_with_stabilizers, axis=1)]
+        cf_anticommuting_removed = operator.cfvec[np.all(commute_with_stabilizers, axis=1)]
+
+        # determine sign flipping from eigenvalue assignment
+        eigval_assignment = op_anticommuting_removed[:,stab_qubits_ref]*eigval
+        eigval_assignment[eigval_assignment==0]=1 #so the product is not 0
+        coeff_sign_flip = cf_anticommuting_removed*np.array([np.prod(eigval_assignment, axis=1)]).T
+
+        # the projected Pauli terms:
+        all_qubits = np.arange(self.n_qubits)
+        free_qubits = all_qubits[~np.isin(all_qubits,stab_qubits)]
+        free_qubits = np.concatenate([free_qubits, free_qubits+self.n_qubits])
+        op_projected = op_anticommuting_removed[:,free_qubits]
+
+        # there may be duplicate rows in op_projected - these are identified and
+        # the corresponding coefficients collected in cleanup_symplectic function
+        op_out = dictionary_operator(
+            *cleanup_symplectic(
+                terms=op_projected, 
+                coeff=coeff_sign_flip
+            )
+        )
+        return op_out 
+        
     
-
     def perform_projection(self,
                     operator: QubitOp,
                     insert_rotation:Tuple[str,float,bool]=None
@@ -169,9 +159,10 @@ class S3_projection:
         self.stab_index_eigval = stab_index_eigval
 
         # perform the full list of rotations on the input operator...
-        op_rotated = operator.perform_rotations(stab_rotations)._dict
+        op_rotated = operator.perform_rotations(stab_rotations)
         # ...and finally perform the stabilizer subspace projection
-        ham_project = self._perform_projection( operator=op_rotated, 
-                                                q_sector=stab_index_eigval)
-
-        return QubitOp(ham_project)
+        op_project = self._perform_projection(
+            operator=op_rotated,
+            q_sector=stab_index_eigval
+        )  
+        return QubitOp(op_project)
