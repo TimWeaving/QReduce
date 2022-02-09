@@ -112,32 +112,25 @@ def adjacency_matrix(p_list: List[str],
     return sym_mat@sym_form@sym_mat.T % 2
 
 
-def cleanup_symplectic(terms, coeff):    
-    """ Remove duplicated rows of symplectic matrix terms, whilst summing the corresponding
-    coefficients of the deleted rows in coeff
+def cleanup_symplectic(terms, coeff):
+    """ Remove duplicated rows of symplectic matrix terms, whilst summing 
+    the corresponding coefficients of the deleted rows in coeff
     """ 
-    # order the pauli terms
-    sort_order = np.lexsort(terms.T)
-    sorted_terms = terms[sort_order,:]
-    sorted_coeff = coeff[sort_order,:]
+    # order lexicographically and take difference between adjacent rows
+    term_ordering = np.lexsort(terms.T)
+    diff_adjacent = np.diff(terms[term_ordering], axis=0)
+    # the unique terms are those which are non-zero
+    mask_unique_terms = np.append(True, ~np.all(diff_adjacent==0, axis=1))
+    # determine the inverse mapping that combines duplicate terms
+    inverse_index = np.zeros_like(term_ordering)
+    inverse_index[term_ordering] = np.cumsum(mask_unique_terms) - 1
+    # drop duplicate terms
+    simplified_terms = terms[term_ordering][mask_unique_terms]
+    # sum over the coefficients of duplicated terms
+    simplified_coeff = np.bincount(inverse_index, weights=coeff.T[0])
+    simplified_coeff = simplified_coeff.reshape(len(simplified_coeff), 1)
     
-    # take difference between adjacent terms and drop 0 rows (duplicates)
-    row_mask = np.append([True],np.any(np.diff(sorted_terms,axis=0),1))
-    out_terms = sorted_terms[row_mask]
-    
-    # sum coefficients of like-terms
-    #if row_mask[-1] == False:
-    row_mask = np.append(row_mask, True)
-    mask_indices = np.where(row_mask==True)[0]
-    mask_diff = np.diff(mask_indices)
-    out_coeff = []
-    for i, d in zip(mask_indices, mask_diff):
-        dup_term_sum = np.sum([sorted_coeff[i+j] for j in range(d)])
-        out_coeff.append([dup_term_sum])
-        
-    out_coeff = np.stack(out_coeff)
-    
-    return out_terms,  out_coeff
+    return simplified_terms, simplified_coeff
 
 
 def gf2_gaus_elim(gf2_matrix: np.array) -> np.array:
