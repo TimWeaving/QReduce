@@ -127,7 +127,11 @@ def cleanup_symplectic(terms, coeff):
     # drop duplicate terms
     simplified_terms = terms[term_ordering][mask_unique_terms]
     # sum over the coefficients of duplicated terms
-    simplified_coeff = np.bincount(inverse_index, weights=coeff.T[0])
+    # note np.bincount doesn't like complex numbers
+    weights = coeff.T[0]
+    cf_real = np.bincount(inverse_index, weights = weights.real)
+    cf_imag = np.bincount(inverse_index, weights = weights.imag)
+    simplified_coeff = cf_real+cf_imag*1j
     simplified_coeff = simplified_coeff.reshape(len(simplified_coeff), 1)
     
     return simplified_terms, simplified_coeff
