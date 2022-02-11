@@ -1,9 +1,6 @@
 from qondense.utils.QubitOp import QubitOp
 from qondense.utils.symplectic_toolkit import *
-from itertools import product
-from typing import Dict, List, Tuple, Union
-from copy import deepcopy
-
+from typing import Dict, List, Tuple
 
 class S3_projection:
     def __init__(self,
@@ -134,7 +131,7 @@ class S3_projection:
                 coeff=coeff_sign_flip
             )
         )
-        return op_out 
+        return QubitOp(op_out) 
         
     
     def perform_projection(self,
@@ -165,4 +162,4 @@ class S3_projection:
             operator=op_rotated,
             q_sector=stab_index_eigval
         )  
-        return QubitOp(op_project)
+        return op_project
