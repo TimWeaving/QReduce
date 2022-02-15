@@ -42,44 +42,38 @@ class S3_projection:
           the eigenvalues post-rotation
         """
         stabilizer_ref = self.stab_eigval.copy()
-        sqpZ_check = stabilizer_ref._symp()[:,self.n_qubits:]
-        rotations  = []
-        while ~np.all(np.count_nonzero(stabilizer_ref._symp().T, axis=0)==1):
+        rotations=[]
+
+        def append_rotation(base_pauli: np.array, index: int) -> str:
+            """ force the indexed qubit to a Pauli Y in the base Pauli
+            """
+            X_index = index % self.n_qubits # index in the X block
+            base_pauli[np.array([X_index, X_index+self.n_qubits])]=1
+            base_pauli = pauli_from_symplectic(base_pauli)
+            rotations.append((base_pauli, np.pi/2, True))
+            # return the pauli rotation to update stabilizer_ref as we go
+            return base_pauli
+
+        # This part produces rotations onto single-qubit Paulis (sqp) - might be a combination of X and Z
+        # while loop active until each row of symplectic matrix contains a single non-zero element
+        while np.any(~(np.count_nonzero(stabilizer_ref._symp(), axis=1)==1)):
             unique_position = np.where(np.count_nonzero(stabilizer_ref._symp(), axis=0)==1)[0]
             reduced = stabilizer_ref._symp()[:,unique_position]
             unique_stabilizer = np.where(np.any(reduced, axis=1))
-            for row,sqp_check_row in zip(stabilizer_ref._symp()[unique_stabilizer,:][0], 
-                                        sqpZ_check[unique_stabilizer, :][0]):
-                # find the free indices and pick one (there is some freedom over this)
-                available_positions = np.intersect1d(unique_position, np.where(row))
-                sqp_index = available_positions[0]
-                # check if already single Pauli X or Z
-                if np.count_nonzero(sqp_check_row) != 1:
-                    # check if diagonal
-                    if np.all(row[:self.n_qubits]==0) and self.single_pauli == 'Z':
-                        # define pauli that rotates off-diagonal
-                        pauli_rotation = np.zeros(2*self.n_qubits)
-                        pauli_rotation[sqp_index]=1
-                        pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
-                        pauli_rotation = pauli_from_symplectic(pauli_rotation)
-                        rotations.append(pauli_rotation)
-                        stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
-                    # pauli rotation mapping to a single-qubit Pauli operator
-                    pauli_rotation=row.copy()
-                    pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
-                    pauli_rotation = pauli_from_symplectic(pauli_rotation)
-                    rotations.append(pauli_rotation)
+            for row in stabilizer_ref._symp()[unique_stabilizer]:
+                if np.count_nonzero(row) != 1:
+                    # find the free indices and pick one (there is some freedom over this)
+                    available_positions = np.intersect1d(unique_position, np.where(row))
+                    pauli_rotation = append_rotation(row.copy(), available_positions[0])
+                    # update the stabilizers by performing the rotation
                     stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
-            sqpZ_check = stabilizer_ref._symp()[:,self.n_qubits:]
-        # there might be one left over at this point
-        if self.single_pauli=='X' and ~np.all(sqpZ_check==0):
-            for row in stabilizer_ref._symp()[np.where(np.any(sqpZ_check==1, axis=1))]:
-                pauli_rotation = row.copy()
-                sqp_index = np.where(pauli_rotation)
-                pauli_rotation[(sqp_index[0]+self.n_qubits)%self.n_qubits]=1
-                rotations.append(pauli_from_symplectic(pauli_rotation))
-                stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
-        rotations = [(rot_op, np.pi/2, True) for rot_op in rotations]
+
+        # This part produces rotations onto the target sqp
+        for row in stabilizer_ref._symp():
+            sqp_index = np.where(row)[0]
+            if ((self.single_pauli == 'Z' and sqp_index< self.n_qubits) or 
+                (self.single_pauli == 'X' and sqp_index>=self.n_qubits)):
+                pauli_rotation = append_rotation(np.zeros(2*self.n_qubits), sqp_index)
 
         # perform the full list of rotations to obtain the new eigenvalues
         rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict()
@@ -90,8 +84,7 @@ class S3_projection:
 
 
     def _perform_projection(self, 
-                        operator: QubitOp,  
-                        q_sector: Dict[int, int],
+                        operator: QubitOp
                         ) -> Dict[str, float]:
         """ 
         method for projecting an operator over fixed qubit positions stabilized 
@@ -160,8 +153,6 @@ class S3_projection:
         # perform the full list of rotations on the input operator...
         op_rotated = operator.perform_rotations(stab_rotations)
         # ...and finally perform the stabilizer subspace projection
-        op_project = self._perform_projection(
-            operator=op_rotated,
-            q_sector=stab_index_eigval
-        )  
+        op_project = self._perform_projection(operator=op_rotated)
+          
         return op_project

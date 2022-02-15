@@ -269,9 +269,11 @@ class ordering_heuristics(cs_vqe):
                 ngs = ''.join([str(self.hf_tapered[i]) for i in range(self.n_qubits) if i not in o])
                 ngs = np.eye(1,2**num_sim_q,int(ngs, 2))
                 ham_cs = self.contextual_subspace_hamiltonian(stabilizer_indices=o)
-                best_energy, cs_vector = exact_gs_energy(ham_cs, matrix_type=m_type, initial_guess=ngs)
+                best_energy, cs_vector = exact_gs_energy(ham_cs, matrix_type=m_type)#, initial_guess=ngs)
+                
                 if print_info:
                     print(f'Number of qubits simulated: {num_sim_q}')
+                    print(f'Ground energy: {best_energy: .10f}')
                     print(f'CS-VQE error w.r.t. HF energy:  {best_energy-self.hf_energy: .10f}')
                     print(f'CS-VQE error w.r.t. MP2 energy: {best_energy-self.mp_energy: .10f}')
                     print(f'CS-VQE error w.r.t. CISD energy:{best_energy-self.cisd_energy: .10f}')
