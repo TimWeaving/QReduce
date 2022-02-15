@@ -29,8 +29,8 @@ class tapering(S3_projection):
         however this is set to X by default (in line with the original tapering paper).
         """
         self.hamiltonian  = QubitOp(hamiltonian)
-        self.n_qbits      = self.hamiltonian.n_qbits
-        assert(len(ref_state)==self.n_qbits)
+        self.n_qubits      = self.hamiltonian.n_qubits
+        assert(len(ref_state)==self.n_qubits)
         self.ref_state    = ref_state
         self.single_pauli = single_pauli
         self.symmetry_ops = self.identify_symmetry_generators()
@@ -49,7 +49,7 @@ class tapering(S3_projection):
         This is carried out in the symplectic representation.
         """
         # swap order of XZ blocks in symplectic matrix to ZX
-        ZX_symp = self.hamiltonian.swap_XZ_blocks()
+        ZX_symp = self.hamiltonian.swap_XZ_blocks().toarray()
         reduced = gf2_gaus_elim(ZX_symp)
         kernel  = gf2_basis_for_gf2_rref(reduced)
 
@@ -119,7 +119,7 @@ class tapering(S3_projection):
         *** very much NOT scalable!
         """
         tapered_ham = []
-        if self.n_qbits < 5:
+        if self.n_qubits < 5:
             matrix_type='dense'
         else:
             matrix_type='sparse'
@@ -127,7 +127,7 @@ class tapering(S3_projection):
         all_sectors = product([+1,-1], repeat=self.n_taper)
         for sector in all_sectors:
             self.update_S3_projection(sector)
-            hamtap = self.taper_it()._dict
+            hamtap = self.taper_it()._dict()
             energy = exact_gs_energy(hamtap, matrix_type)[0]
             tapered_ham.append(
                 (

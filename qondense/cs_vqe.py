@@ -41,7 +41,7 @@ class cs_vqe(S3_projection):
         """
         # Hamiltonian and noncontextual model
         self.hamiltonian  = QubitOp(hamiltonian)
-        self.n_qubits     = self.hamiltonian.n_qbits
+        self.n_qubits     = self.hamiltonian.n_qubits
         self.single_pauli = single_pauli
         self.ref_state    = ref_state
         if noncontextual_set is not None:
@@ -50,7 +50,7 @@ class cs_vqe(S3_projection):
             self.noncontextual_set = self.find_noncontextual_set()
         self.ham_noncontextual = QubitOp({op:hamiltonian[op] for op in self.noncontextual_set[::-1]})
         #self.generators, self.cliquereps = self.independent_generators()
-        self.generators, self.cliquereps, construction = quasi_model(self.ham_noncontextual._dict)
+        self.generators, self.cliquereps, construction = quasi_model(self.ham_noncontextual._dict())
         # noncontextual ground state
         self.objfncprms = self.classical_obj_fnc_params()
         self.ngs_energy, self.nu, self.r = self.find_ngs()
@@ -74,7 +74,7 @@ class cs_vqe(S3_projection):
         """
         # for now uses the legacy greedy DFS approach
         # to be updated once more efficient/effective methods are identified
-        noncontextual_set = greedy_dfs(self.hamiltonian._dict, cutoff=search_time,
+        noncontextual_set = greedy_dfs(self.hamiltonian._dict(), cutoff=search_time,
                             criterion="weight")[1]
         return noncontextual_set
 
@@ -90,7 +90,7 @@ class cs_vqe(S3_projection):
 
         # find symmetry generators
         # swap order of XZ blocks in symplectic matrix to ZX
-        ZX_symp = self.ham_noncontextual.swap_XZ_blocks()
+        ZX_symp = self.ham_noncontextual.swap_XZ_blocks().toarray()
         ZX_reduced = gf2_gaus_elim(ZX_symp)
         ZX_reduced = ZX_reduced[~np.all(ZX_reduced == 0, axis=1)]
         kernel  = gf2_basis_for_gf2_rref(ZX_reduced)
@@ -313,7 +313,7 @@ class cs_vqe(S3_projection):
             projection_qubits  = projection_qubits
         )
 
-        return cleanup_operator(ham_cs._dict, threshold=8)
+        return cleanup_operator(ham_cs._dict(), threshold=8)
 
 
     def noncontextual_ground_state(self,
