@@ -22,7 +22,7 @@ class tapering(S3_projection):
     def __init__(self, 
                 hamiltonian: Dict[str, float],
                 ref_state: List[int],
-                single_pauli: str = 'X'):
+                target_sqp: str = 'X'):
         """ Input a Hamiltonian in the dictionary representation...
         ... and some reference state such as Hartree-Fock, e.g. |0...01...1>
         There is freedom over the choice of single Pauli operator we wish to rotate onto, 
@@ -32,7 +32,7 @@ class tapering(S3_projection):
         self.n_qubits      = self.hamiltonian.n_qubits
         assert(len(ref_state)==self.n_qubits)
         self.ref_state    = ref_state
-        self.single_pauli = single_pauli
+        self.target_sqp = target_sqp
         self.symmetry_ops = self.identify_symmetry_generators()
         self.symmetry_sec = self.identify_symmetry_sector()
         self.n_taper      = len(self.symmetry_ops)
@@ -40,7 +40,7 @@ class tapering(S3_projection):
         super().__init__(
             stabilizers = self.symmetry_ops, 
             eigenvalues = self.symmetry_sec, 
-            single_pauli= self.single_pauli
+            target_sqp= self.target_sqp
         )
 
 
@@ -72,7 +72,7 @@ class tapering(S3_projection):
         super().__init__(
             stabilizers = self.symmetry_ops, 
             eigenvalues = symmetry_sector, 
-            single_pauli= self.single_pauli
+            target_sqp= self.target_sqp
         )
 
 

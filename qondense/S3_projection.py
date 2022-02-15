@@ -1,15 +1,47 @@
+from shutil import ExecError
 from qondense.utils.QubitOp import QubitOp
 from qondense.utils.symplectic_toolkit import *
 from typing import Dict, List, Tuple
 
 class S3_projection:
+    """ Base class for enabling qubit reduction techniques derived from
+    the Stabilizer SubSpace (S3) projection framework, such as tapering
+    and Contextual-Subspace VQE. The methods defined herein serve the 
+    following purposes:
+
+    - stabilizer_rotations
+        This method determines a sequence of Clifford rotations mapping the
+        provided stabilizers onto single-qubit Paulis (sqp), either X or Z
+    - _perform_projection
+        Assuming the input operator has been rotated via the Clifford operations 
+        found in the above stabilizer_rotations method, this will effect the 
+        projection onto the corresponding stabilizer subspace. This involves
+        droping any operator terms that do not commute with the rotated generators
+        and fixing the eigenvalues of those that do consistently.
+    - perform_projection
+        This method wraps _perform_projection but provides the facility to insert
+        auxiliary rotations (that need not be Clifford). This is used in CS-VQE
+        to implement unitary partitioning where necessary. 
+    """
+    
+    rotated_flag = False
+
     def __init__(self,
                 stabilizers:  List[str], 
                 eigenvalues:  List[int],
-                single_pauli: str,
-                sqp_override: List[int] = None
+                target_sqp: str,
+                fix_qubits: List[int] = None
                 ) -> None:
         """
+        - stabilizers
+            a list of stabilizers that should be enforced, given as Pauli strings
+        - eigenvalues
+            the list of eigenvalue assignments to complement the stabilizers
+        - target_sqp
+            the target single-qubit Pauli (X or Z) that we wish to rotate onto
+        - fix_qubits
+            Manually overrides the qubit positions selected in stabilizer_rotations, 
+            although the rotation procedure can be a bit unpredictable so take care!
         """
         self.n_qubits = number_of_qubits(stabilizers)
 
@@ -24,10 +56,10 @@ class S3_projection:
         # this facilitates various manipulations such as Pauli rotations
         self.stab_eigval = QubitOp({S:eigval for S,eigval 
                                     in zip(stabilizers, eigenvalues)})
-        self.single_pauli= single_pauli
-        if sqp_override is None:
-            sqp_override = [None for S in stabilizers]
-        self.sqp_override = sqp_override
+        self.target_sqp= target_sqp
+        if fix_qubits is None:
+            fix_qubits = [None for S in stabilizers]
+        self.fix_qubits = fix_qubits
         
 
     def stabilizer_rotations(self):
@@ -71,13 +103,13 @@ class S3_projection:
         # This part produces rotations onto the target sqp
         for row in stabilizer_ref._symp():
             sqp_index = np.where(row)[0]
-            if ((self.single_pauli == 'Z' and sqp_index< self.n_qubits) or 
-                (self.single_pauli == 'X' and sqp_index>=self.n_qubits)):
+            if ((self.target_sqp == 'Z' and sqp_index< self.n_qubits) or 
+                (self.target_sqp == 'X' and sqp_index>=self.n_qubits)):
                 pauli_rotation = append_rotation(np.zeros(2*self.n_qubits), sqp_index)
 
         # perform the full list of rotations to obtain the new eigenvalues
         rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict()
-        stab_index_eigenval = {S_rot.index(self.single_pauli):eigval 
+        stab_index_eigenval = {S_rot.index(self.target_sqp):eigval 
                             for S_rot,eigval in rotated_stabilizers.items()}
 
         return rotations, stab_index_eigenval
@@ -86,16 +118,18 @@ class S3_projection:
     def _perform_projection(self, 
                         operator: QubitOp
                         ) -> Dict[str, float]:
-        """ 
-        method for projecting an operator over fixed qubit positions stabilized 
-        by single Pauli operators (obtained via Clifford operations)
+        """ method for projecting an operator over fixed qubit positions 
+        stabilized by single Pauli operators (obtained via Clifford operations)
         """
+        if not self.rotated_flag:
+            raise ExecError('The operator has not been rotated - intended for use with perform_projection method')
+
         stab_qubits,eigval = zip(*self.stab_index_eigval.items())
         stab_qubits,eigval = np.array(stab_qubits),np.array(eigval)
         
         # pick out relevant element of symplectic for single Pauli X or Z
         stab_qubits_ref = stab_qubits.copy()
-        if self.single_pauli=='Z':
+        if self.target_sqp=='Z':
             stab_qubits_ref += self.n_qubits
 
         # build the single-qubits Paulis the stabilizers are rotated onto
@@ -133,8 +167,7 @@ class S3_projection:
                     operator: QubitOp,
                     insert_rotation:Tuple[str,float,bool]=None
                     )->Dict[float, str]:
-        """ 
-        Input a QubitOp and returns the reduced operator corresponding 
+        """ Input a QubitOp and returns the reduced operator corresponding 
         with the specified stabilizers and eigenvalues.
         
         insert_rotation allows one to include supplementary Pauli rotations
@@ -152,7 +185,8 @@ class S3_projection:
 
         # perform the full list of rotations on the input operator...
         op_rotated = operator.perform_rotations(stab_rotations)
+        self.rotated_flag = True
         # ...and finally perform the stabilizer subspace projection
         op_project = self._perform_projection(operator=op_rotated)
-          
+
         return op_project
