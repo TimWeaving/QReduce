@@ -14,7 +14,7 @@ class S3_projection:
         self.n_qubits = number_of_qubits(stabilizers)
 
         # check the stabilizers are independent:
-        check_independent = gf2_gaus_elim(QubitOp(stabilizers)._symp)
+        check_independent = gf2_gaus_elim(QubitOp(stabilizers)._symp())
         for row in check_independent:
             if np.all(row==0):
                 raise ValueError('The supplied stabilizers are not independent')
@@ -42,13 +42,13 @@ class S3_projection:
           the eigenvalues post-rotation
         """
         stabilizer_ref = self.stab_eigval.copy()
-        sqpZ_check = stabilizer_ref._symp[:,self.n_qubits:]
+        sqpZ_check = stabilizer_ref._symp()[:,self.n_qubits:]
         rotations  = []
-        while ~np.all(np.count_nonzero(stabilizer_ref._symp.T, axis=0)==1):
-            unique_position = np.where(np.count_nonzero(stabilizer_ref._symp, axis=0)==1)[0]
-            reduced = stabilizer_ref._symp[:,unique_position]
+        while ~np.all(np.count_nonzero(stabilizer_ref._symp().T, axis=0)==1):
+            unique_position = np.where(np.count_nonzero(stabilizer_ref._symp(), axis=0)==1)[0]
+            reduced = stabilizer_ref._symp()[:,unique_position]
             unique_stabilizer = np.where(np.any(reduced, axis=1))
-            for row,sqp_check_row in zip(stabilizer_ref._symp[unique_stabilizer,:][0], 
+            for row,sqp_check_row in zip(stabilizer_ref._symp()[unique_stabilizer,:][0], 
                                         sqpZ_check[unique_stabilizer, :][0]):
                 # find the free indices and pick one (there is some freedom over this)
                 available_positions = np.intersect1d(unique_position, np.where(row))
@@ -61,26 +61,28 @@ class S3_projection:
                         pauli_rotation = np.zeros(2*self.n_qubits)
                         pauli_rotation[sqp_index]=1
                         pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
-                        rotations.append(pauli_from_symplectic(pauli_rotation))
-                        stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
+                        pauli_rotation = pauli_from_symplectic(pauli_rotation)
+                        rotations.append(pauli_rotation)
+                        stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
                     # pauli rotation mapping to a single-qubit Pauli operator
                     pauli_rotation=row.copy()
                     pauli_rotation[(sqp_index+self.n_qubits)%self.n_qubits]=1
-                    rotations.append(pauli_from_symplectic(pauli_rotation))
-                    stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
-            sqpZ_check = stabilizer_ref._symp[:,self.n_qubits:]
+                    pauli_rotation = pauli_from_symplectic(pauli_rotation)
+                    rotations.append(pauli_rotation)
+                    stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
+            sqpZ_check = stabilizer_ref._symp()[:,self.n_qubits:]
         # there might be one left over at this point
         if self.single_pauli=='X' and ~np.all(sqpZ_check==0):
-            for row in stabilizer_ref._symp[np.where(np.any(sqpZ_check==1, axis=1))]:
+            for row in stabilizer_ref._symp()[np.where(np.any(sqpZ_check==1, axis=1))]:
                 pauli_rotation = row.copy()
                 sqp_index = np.where(pauli_rotation)
                 pauli_rotation[(sqp_index[0]+self.n_qubits)%self.n_qubits]=1
                 rotations.append(pauli_from_symplectic(pauli_rotation))
-                stabilizer_ref = stabilizer_ref.signless_rotation(pauli_rotation)
+                stabilizer_ref = stabilizer_ref.rotate_by_pauli(pauli_rotation)
         rotations = [(rot_op, np.pi/2, True) for rot_op in rotations]
 
         # perform the full list of rotations to obtain the new eigenvalues
-        rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict
+        rotated_stabilizers = self.stab_eigval.perform_rotations(rotations)._dict()
         stab_index_eigenval = {S_rot.index(self.single_pauli):eigval 
                             for S_rot,eigval in rotated_stabilizers.items()}
 
@@ -108,8 +110,8 @@ class S3_projection:
                                         for q_pos in stab_qubits_ref])
 
         # remove terms that do not commute with the rotated stabilizers
-        commute_with_stabilizers = operator.commutes_with(single_qubit_paulis)==0
-        op_anticommuting_removed = operator._symp[np.all(commute_with_stabilizers, axis=1)]
+        commute_with_stabilizers = operator.commutes_with(single_qubit_paulis).toarray()==0
+        op_anticommuting_removed = operator._symp()[np.all(commute_with_stabilizers, axis=1)]
         cf_anticommuting_removed = operator.cfvec[np.all(commute_with_stabilizers, axis=1)]
 
         # determine sign flipping from eigenvalue assignment

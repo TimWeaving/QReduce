@@ -231,9 +231,6 @@ def exact_gs_energy(operator:Dict[str, float], matrix_type='sparse', initial_gue
     return ground_energy, np.array(ground_state)
 
 
-
-
-
 def plot_ground_state_amplitudes(operator: Dict[str, float], 
                                 num_qubits: int, 
                                 reverse_bitstrings: bool=False,

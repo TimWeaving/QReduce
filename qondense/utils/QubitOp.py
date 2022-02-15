@@ -1,12 +1,14 @@
-import scipy
 from qondense.utils.symplectic_toolkit import *
 from copy import deepcopy
 from typing import Union
 from scipy import sparse
 
+
 class QubitOp:
-    """ Class to represent an operator defined over 
-    the Pauli group in the symplectic form.
+    """ Class to represent an operator defined over the Pauli group 
+    in the symplectic form. The internal symplectic matrix is stored
+    in the compressed sparse column (CSC) form to enable fast matrix 
+    operations.
     """
 
     pauli_map = {   
@@ -19,11 +21,19 @@ class QubitOp:
         }
 
     def __init__(self, 
-            operator: Union[str, List[str], Dict[str, float]] = None,
-            symp_rep: np.array = None,
+            operator: Union[str, List[str], Dict[str, float], np.array] = None,
+            symp_rep: sparse.csc_matrix = None,
             coeffvec: np.array = None
         ):
-        """
+        """ When the class is first initialized it is easiest to provide
+        the operator stored as a dictionary where keys are strings representing
+        Pauli operators and values coefficients. The operator may also be given
+        as a string or list of strings, in which case the coefficients will be 
+        set to 1. However, in the interest of efficiency, whenever a method creates
+        a new QubitOp instance it will instead specify the operator in the sparse
+        form, with a vector of coefficients stored as an array. This way we are
+        not constantly convertng back and forth between the dictionary and 
+        symplectic represenations.
         """
         if operator is None:
             # Here the operator has been specified by its 
@@ -32,27 +42,23 @@ class QubitOp:
             r1,c1=symp_rep.shape
             r2,c2=coeffvec.shape
             assert(r1==r2 and c1%2==0 and c2==1)
-            
-            self._symp = symp_rep
             self.cfvec = coeffvec
             self.n_qubits = c1//2
             self.n_terms  = r1
         else:
-            # This handles over operator 
-            # Convert operator to dictionary
+            # This handles other operator types by converting to a dictionary
             if type(operator)==str:
                 operator = [operator]
             if type(operator)==list:
                 operator = {op:1 for op in operator}
-            if type(operator)==np.array:
+            if type(operator) in [np.array, np.ndarray]:
                 operator = dictionary_operator(operator, np.ones((operator.shape[0],1)))
-
             # Extract number of qubits and corresponding symplectic form
             self.n_qubits = number_of_qubits(operator)
             self.n_terms = len(operator)
 
             # build each of the X,Z symplectic blocks separately for accessibility
-            terms, coeff = zip(*operator.items())
+            terms, coeffvec = zip(*operator.items())
             XZ_search = {'X':['X', 'Y'], 'Z':['Z', 'Y']}
             def build_block(which):
                 zero_block = np.zeros((self.n_terms, self.n_qubits))
@@ -65,47 +71,59 @@ class QubitOp:
             self.Z_block = build_block('Z')
             # by default we store the X and Z blocks on the left and right, respectively
             # ... and finally, the vector of coefficients:
-            self.cfvec = np.array(coeff).reshape(self.n_terms,1)
-            self._symp = np.hstack((self.X_block, self.Z_block))
+            self.cfvec = np.array(coeffvec).reshape(self.n_terms,1)
+            symp_rep   = np.hstack((self.X_block, self.Z_block))
 
-        self._csc = sparse.csc_matrix(self._symp, dtype=int) # sparsify
-        self.X_block = self._csc[:,:self.n_qubits]
-        self.Z_block = self._csc[:,self.n_qubits:]
+        # symplectic matrix stored in compressed sparse column (CSC) form
+        if not isinstance(symp_rep,sparse.csc_matrix):
+            symp_rep = sparse.csc_matrix(symp_rep, dtype=int) # sparsify
+        self._symp_csc = symp_rep
+        self.X_block = self._symp_csc[:,:self.n_qubits]
+        self.Z_block = self._symp_csc[:,self.n_qubits:]
         # symplectic forms for computing inner products
         self.half_symform     = np.eye(2*self.n_qubits,2*self.n_qubits,self.n_qubits)
         self.half_symform_csc = sparse.csc_matrix(self.half_symform, dtype=int)
         self.symform     = np.array(self.half_symform + self.half_symform.T, dtype=int)
         self.symform_csc = sparse.csc_matrix(self.symform, dtype=int)
 
-        
-    def _dict(self):
+    
+    def _symp(self) -> np.array:
+        """ Get the symplectic matrix in dense form
         """
-        """
-        return dictionary_operator(self._symp, self.cfvec)
+        return self._symp_csc.toarray()
 
 
-    def copy(self):
+    def _dict(self) -> dict:
+        """ Get the sparse operator back out as a dictionary.
+        It is easier to see what the terms are in this represenation. 
+        """
+        return dictionary_operator(self._symp(), self.cfvec)
+
+
+    def copy(self) -> "QubitOp":
         """ Create a carbon copy of the class instance
         """
         return deepcopy(self)
 
     
-    def reform(self, operator):
-        """ funnel the input operator regardless of type into QubitOp
+    def reform(self, 
+            operator: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> "QubitOp":
+        """ Funnel the input operator regardless of type into QubitOp
         """
         if not isinstance(operator, QubitOp):
             operator = QubitOp(operator)
         return operator.copy()
 
 
-    def swap_XZ_blocks(self):
+    def swap_XZ_blocks(self) -> sparse.csc_matrix:
             """ Reverse order of symplectic matrix so that 
             Z operators are on the left and X on the right
             """
             return sparse.hstack((self.Z_block, self.X_block))
 
 
-    def count_pauli_Y(self):
+    def count_pauli_Y(self) -> np.array:
         """ Count the qubit positions of each term set to Pauli Y
         """
         Y_coords = self.X_block + self.Z_block == 2
@@ -116,21 +134,21 @@ class QubitOp:
             operator_basis: List[str]
         ) -> np.array:
         """ simultaneously reconstruct every operator term in the supplied basis.
-        Performs Gaussian elimination on [op_basis.T | self_symp.T] and restricts 
+        Performs Gaussian elimination on [op_basis.T | self_symp_csc.T] and restricts 
         so that the row-reduced identity block is removed. Each row of the
         resulting matrix will index the basis elements required to reconstruct
         the corresponding term in the operator.
         """
         dim = len(operator_basis)
-        basis_symp = self.reform(operator_basis)._symp
-        basis_op_stack = np.vstack([basis_symp, self._symp])
-        ham_reconstruction = gf2_gaus_elim(basis_op_stack.T)[:dim,dim:].T
+        basis_symp_csc = self.reform(operator_basis)._symp_csc
+        basis_op_stack = sparse.vstack([basis_symp_csc, self._symp_csc])
+        ham_reconstruction = gf2_gaus_elim(basis_op_stack.toarray().T)[:dim,dim:].T
 
         return ham_reconstruction
 
 
     def symplectic_inner_product(self, 
-            aux_paulis: Union[str, List[str], np.array], 
+            aux_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"], 
             sip_type = 'full'
         ) -> np.array:
         """ Method to calculate the symplectic inner product of the represented
@@ -141,21 +159,21 @@ class QubitOp:
         - half, which computes sign flips for Pauli multiplication
         """
         if sip_type == 'full':
-            U = self.symform_csc
+            Omega = self.symform_csc
         elif sip_type == 'half':
-            U = self.half_symform_csc
+            Omega = self.half_symform_csc
         else:
             raise ValueError('Accepted values for sip_type are half or full')
 
         aux_paulis = self.reform(aux_paulis)
-        sparse_inner_product = self._csc @ U @ aux_paulis._csc.transpose()
-        sparse_inner_product.data %= 2 # effects modulo 2 in csc form
+        sparse_inner_product = self._symp_csc @ Omega @ aux_paulis._symp_csc.transpose()
+        sparse_inner_product.data %= 2 # effects modulo 2 in sparse form
 
         return sparse_inner_product
 
 
     def commutes_with(self, 
-            check_paulis: Union[str, List[str], np.array]
+            check_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
         ) -> np.array:
         """ Returns an array in which:
         - 0 entries denote commutation and
@@ -167,11 +185,11 @@ class QubitOp:
     def adjacency_matrix(self) -> np.array:
         """ Checks commutation of the represented operator with itself
         """
-        return self.commutes_with(check_paulis=self._symp)
+        return self.commutes_with(check_paulis=self._symp_csc)
 
 
     def sign_difference(self, 
-            check_paulis:Union[str, List[str], np.array]
+            check_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
         ) -> np.array:
         """ symplectic inner product but with a modified syplectic form.
         This keeps track of sign flips resulting from Pauli multiplication
@@ -180,17 +198,10 @@ class QubitOp:
         return self.symplectic_inner_product(aux_paulis=check_paulis, sip_type='half')
 
 
-    def _multiply_by_pauli(self, pauli):
-        """ performs *phaseless* Pauli multiplication 
-        via binary summation of the symplectic matrix
-        """
-        pauli = self.reform(pauli)
-        pauli_mult = self._csc + pauli._csc
-        pauli_mult.data %= 2 # effects modulo 2 in csc form
-        return QubitOp(symp_rep=pauli_mult.toarray(), coeffvec=self.cfvec)
-
-
-    def phase_modification(self, source_pauli, target_pauli) -> np.array:
+    def phase_modification(self, 
+            source_pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"], 
+            target_pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> np.array:
         """ compensates for the phases incurred through Pauli multiplication
         implemented as per https://doi.org/10.1103/PhysRevA.68.042318
 
@@ -206,7 +217,22 @@ class QubitOp:
         return phase_mod
 
 
-    def multiply_pauli(self, pauli):
+    def _multiply_by_pauli(self, 
+            pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> "QubitOp":
+        """ performs *phaseless* Pauli multiplication via binary summation 
+        of the symplectic matrix. Phase requires additional operations that
+        are computed in phase_modification.
+        """
+        pauli = self.reform(pauli)
+        pauli_mult = self._symp_csc + pauli._symp_csc
+        pauli_mult.data %= 2 # effects modulo 2 in csc form
+        return QubitOp(symp_rep=pauli_mult, coeffvec=self.cfvec)
+
+
+    def multiply_by_pauli(self, 
+            pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> "QubitOp":
         """ computes right-multiplication of the internal operator 
         by some single pauli operator... *with* phases
         """
@@ -214,14 +240,16 @@ class QubitOp:
         assert(pauli.n_terms==1) # must be a single pauli operator
 
         # perform the pauli multiplication disregarding phase
-        signless_product = self._multiply_by_pauli(pauli)
-        phase_mod = self.phase_modification(pauli, signless_product)
+        phaseless_product = self._multiply_by_pauli(pauli)
+        phase_mod = self.phase_modification(pauli, phaseless_product)
         new_cfvec = self.cfvec*pauli.cfvec*phase_mod
         
-        return QubitOp(symp_rep=signless_product._symp, coeffvec=new_cfvec)
+        return QubitOp(symp_rep=phaseless_product._symp_csc, coeffvec=new_cfvec)
 
 
-    def multiply_by_operator(self, operator):
+    def multiply_by_operator(self, 
+            operator: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> "QubitOp":
         """ computes right-multiplication of the internal operator 
         by some other operator that may contain arbitrarily many terms
         """
@@ -229,8 +257,8 @@ class QubitOp:
         pauli_products = []
         cfvec_products = []
         for pauli, coeff in operator._dict().items():
-            product = self.multiply_pauli({pauli:coeff})
-            pauli_products.append(product._symp)
+            product = self.multiply_by_pauli({pauli:coeff})
+            pauli_products.append(product._symp())
             cfvec_products.append(product.cfvec)
 
         clean_terms, clean_coeff = cleanup_symplectic(
@@ -240,41 +268,76 @@ class QubitOp:
         return QubitOp(symp_rep=clean_terms, coeffvec=clean_coeff) 
             
 
-    def _rotate_by_pauli(self, pauli_rotation):
+    def _rotate_by_pauli(self, 
+            pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+        ) -> "QubitOp":
         """ Performs (H Omega vT \otimes v) \plus H where H is the internal operator, 
-        Omega the symplectic form and v the symplectic representation of pauli_rotation
+        Omega the symplectic form and v the symplectic representation of pauli
         """
-        pauli_rotation = self.reform(pauli_rotation)
-        commutes = self.commutes_with(pauli_rotation)
-        rot_where_commutes = sparse.kron(commutes, pauli_rotation._csc)
-        signless_rotation = self._csc + rot_where_commutes
-        signless_rotation.data %= 2 # modulo 2
-        signless_rotation = QubitOp(symp_rep = signless_rotation.toarray(),
-                                    coeffvec=self.cfvec)
-        return signless_rotation, commutes.toarray()
+        pauli = self.reform(pauli)
+        assert(pauli.n_terms==1) # must be a single pauli operator
+
+        commutes = self.commutes_with(pauli)
+        rot_where_commutes = sparse.kron(commutes, pauli._symp_csc)
+        phaseless_rotation = self._symp_csc + rot_where_commutes
+        phaseless_rotation.data %= 2 # modulo 2
+        phaseless_rotation = QubitOp(symp_rep = phaseless_rotation,
+                                    coeffvec = self.cfvec)
+        return phaseless_rotation, commutes.toarray()
 
     
-    def rotate_by_pauli(self, pauli_rotation):
+    def rotate_by_pauli(self, 
+            pauli: Union[str, List[str], Dict[str, float], np.array, "QubitOp"], 
+            angle: float = np.pi/2, 
+            clifford_flag: bool = True
+        ) -> "QubitOp":
         """ Let R(t) = e^{i t/2 Q}, then one of the following can occur:
         R(t) P R^\dag(t) = P when [P,Q] = 0
         R(t) P R^\dag(t) = cos(t) P + sin(t) (-iPQ) when {P,Q} = 0
-        This operation is Clifford when t=pi/2, since cos(pi/2) P - sin(pi/2) iPQ = -iPQ
-        In unitary partitioning t will not be so nice and will result in an increase in the number of terms (non-Clifford)
         
-        <!> Need to add rotation by angles other than pi/2!
+        This operation is Clifford when t=pi/2, since cos(pi/2) P - sin(pi/2) iPQ = -iPQ.
+        For t!=pi/2 an increase in the number of terms can be observed (non-Clifford unitary).
         """
-        signless_rotation, commutes = self._rotate_by_pauli(pauli_rotation)
-        phase_mod = self.phase_modification(pauli_rotation, signless_rotation)
+        pauli = self.reform(pauli)
+        phaseless_rotation, commutes = self._rotate_by_pauli(pauli)
+        phase_mod = self.phase_modification(pauli, phaseless_rotation)
         # zero out phase mod where term commutes
         phase_mod = phase_mod*commutes
         commutes_inv = np.array(commutes==0, dtype=int) #inverted commutes vector
-        phase_mod = commutes_inv - phase_mod*1j # -1j comes from rotation derivation above
-        new_cfvec = self.cfvec*pauli_rotation.cfvec*phase_mod
-        
-        return QubitOp(symp_rep=signless_rotation._symp, coeffvec=new_cfvec)
+        if clifford_flag:
+            # rotates by pi/2 regardless of specified angle
+            # set clifford=False to change this behaviour
+            phase_mod = commutes_inv - phase_mod*1j # -1j comes from rotation derivation above
+            new_cfvec = self.cfvec*pauli.cfvec*phase_mod
+            return QubitOp(symp_rep=phaseless_rotation._symp_csc, coeffvec=new_cfvec)
+        else:
+            phase_mod = commutes_inv - np.sin(angle)*phase_mod*1j
+            new_cfvec = self.cfvec*pauli.cfvec*phase_mod
+            # when non-Clifford the anti-commuting terms can split in two under rotation:
+            extra_ops = self._symp_csc[np.where((commutes==1).T[0])]
+            extra_cfv = self.cfvec[np.where((commutes==1).T[0])]*pauli.cfvec*np.cos(angle)
+            # remove and sum coefficients of duplicate terms arising from this split
+            clean_terms, clean_coeff = cleanup_symplectic(
+                terms=sparse.vstack([phaseless_rotation._symp_csc, extra_ops]).toarray(), 
+                coeff=np.vstack([new_cfvec, extra_cfv])
+            )
+            return QubitOp(symp_rep=clean_terms, coeffvec=clean_coeff)
+            
+    
+    def perform_rotations(self, 
+            rotation_list:List[Tuple[str,float,bool]]
+        ) -> "QubitOp":
+        """ Allows one to perform a list of rotations sequentially,
+        stored in the form [(pauli, angle, clifford_flag), ...]
+        """
+        op_copy = self.copy()
+        for pauli, angle, clifford_flag in rotation_list:
+            op_copy = op_copy.rotate_by_pauli(pauli,angle,clifford_flag)
+        return op_copy
 
 
     ###### BELOW THIS POINT SOON TO BE DEPRECATED #######
+    ###### Left for the purposes of checking      #######
 
     def _dictionary_rotation(self, 
                             pauli_rot:str, 
@@ -283,13 +346,13 @@ class QubitOp:
                             )->Dict[str, float]:
 
         ## determine possible Paulis in image to avoid if statements
-        #pauli_rot_symp = pauli_to_symplectic(pauli_rot)
+        #pauli_rot_symp_csc = pauli_to_symp_csclectic(pauli_rot)
         #I = np.eye(2*self.n_qubits, 2*self.n_qubits)
-        #OmegaPtxP = np.outer(self.symform @ pauli_rot_symp.T, pauli_rot_symp)
+        #OmegaPtxP = np.outer(self.symform @ pauli_rot_symp_csc.T, pauli_rot_symp_csc)
         #P_mult_mat = (I+OmegaPtxP) % 2
         ## determine Pauli terms
-        #RQRt = (self._symp @ P_mult_mat) % 2
-        #poss_ops = np.concatenate((self._symp, RQRt))
+        #RQRt = (self._symp_csc @ P_mult_mat) % 2
+        #poss_ops = np.concatenate((self._symp_csc, RQRt))
         #poss_ops = dictionary_operator(
         #                                poss_ops, 
         #                                np.array([[0] for i in range(len(poss_ops))])
@@ -325,39 +388,6 @@ class QubitOp:
                     update_op(op=op_out, P=''.join(paulis), c=np.sin(angle)*coeff_update)
                 
         return op_out
-
-
-    def rotate_by(self, 
-                pauli_rot:str,  
-                angle:float=None,
-                clifford_flag:bool=True,
-                rot_type:str='dict'
-                ):
-        """ Let R = e^(i t/2 P)... this method returns R H R^\dag
-        angle = pi/2 for R to be a Clifford operations
-        """
-
-        if rot_type not in ['dict', 'symp']:
-            raise ValueError('Accepted values for rot_type are dict and symp')
-        assert(len(pauli_rot) == self.n_qubits)
-
-        if rot_type == 'symp':
-            rotated_op = self._symplectic_rotation(pauli_rot,angle,clifford_flag,angle)
-        elif rot_type == 'dict':
-            rotated_op = self._dictionary_rotation(pauli_rot,angle,clifford_flag)
-
-        return QubitOp(rotated_op)
-
-
-    def perform_rotations(self, rotation_list:List[Tuple[str,float,bool]]):
-        """ Allows one to perform a list of rotations sequentially
-        """
-        op_copy = QubitOp(deepcopy(self._dict()))
-
-        for pauli_rot, angle, clifford_flag in rotation_list:
-            op_copy = op_copy.rotate_by(pauli_rot,angle,clifford_flag)
-
-        return op_copy
 
 
         

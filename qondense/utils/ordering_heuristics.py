@@ -66,13 +66,13 @@ class ordering_heuristics(cs_vqe):
         print(dashes)
 
         # build CS-VQE model
-        terms_noncon = [op for op in self.ham_tap._dict if set(op) in [{'I'},{'Z'},{'I','Z'}]]
-        #for op, coeff in sorted(self.ham_tap._dict.items(), key=lambda x:-abs(x[1])):
+        terms_noncon = [op for op in self.ham_tap._dict() if set(op) in [{'I'},{'Z'},{'I','Z'}]]
+        #for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
         #    distinct_paulis = list(set(op))
         #    if 'X' in distinct_paulis or 'Y' in distinct_paulis:
         #        terms_noncon.append(op)
         #        break
-        super().__init__(hamiltonian=self.ham_tap._dict,
+        super().__init__(hamiltonian=self.ham_tap._dict(),
                         noncontextual_set=terms_noncon,
                         ref_state=self.hf_tapered)
         print("CS-VQE information:")
@@ -193,14 +193,14 @@ class ordering_heuristics(cs_vqe):
     def by_Hamiltonian_magnitude(self):
         """
         """
-        ham_sorted = sorted(self.ham_tap._dict.items(), key=lambda x:-abs(x[1]))
+        ham_sorted = sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1]))
         return self.stab_index_from_term_weighting(ham_sorted)
 
 
     def by_second_order_response(self):
         """
         """
-        ham_sorted = sorted(self.sor_tap._dict.items(), key=lambda x:-abs(x[1]))
+        ham_sorted = sorted(self.sor_tap._dict().items(), key=lambda x:-abs(x[1]))
         return self.stab_index_from_term_weighting(ham_sorted)
 
     ##########################
