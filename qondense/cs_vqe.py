@@ -32,7 +32,7 @@ class cs_vqe(S3_projection):
                 hamiltonian: Dict[str, float],
                 noncontextual_set: List[str] = None,
                 ref_state: List[int] = None,
-                single_pauli: str = 'Z'
+                target_sqp: str = 'Z'
                 ) -> None:
         """ Input a Hamiltonian in the dictionary representation and, optionally, a noncontextual 
         subset of Pauli terms (if not supplied then find_noncontextual_set() will be called.)
@@ -42,7 +42,7 @@ class cs_vqe(S3_projection):
         # Hamiltonian and noncontextual model
         self.hamiltonian  = QubitOp(hamiltonian)
         self.n_qubits     = self.hamiltonian.n_qubits
-        self.single_pauli = single_pauli
+        self.target_sqp = target_sqp
         self.ref_state    = ref_state
         if noncontextual_set is not None:
             self.noncontextual_set = noncontextual_set
@@ -279,10 +279,10 @@ class cs_vqe(S3_projection):
         # Now invoke the stabilizer subspace projection class methods given the chosen
         # stabilizers we wish to project (fixing the eigenvalues of corresponding qubits) 
         super().__init__(
-            stabilizers  = stabilizers, 
-            eigenvalues  = eigenvalues, 
-            single_pauli = self.single_pauli,
-            sqp_override = projection_qubits
+            stabilizers = stabilizers, 
+            eigenvalues = eigenvalues, 
+            target_sqp  = self.target_sqp,
+            fix_qubits  = projection_qubits
         )
 
         insert_rotation=None
