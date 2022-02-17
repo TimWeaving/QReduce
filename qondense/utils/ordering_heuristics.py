@@ -4,6 +4,7 @@ from qondense.cs_vqe import cs_vqe
 from typing import Dict, List
 from openfermion import get_fermion_operator, jordan_wigner, FermionOperator
 from openfermionpyscf import PyscfMolecularData
+from qondense.utils.cs_vqe_tools_legacy import greedy_dfs
 from qondense.utils.qonversion_tools import QubitOperator_to_dict
 from qondense.tapering import tapering
 from qondense.utils.operator_toolkit import exact_gs_energy
@@ -66,12 +67,28 @@ class ordering_heuristics(cs_vqe):
         print(dashes)
 
         # build CS-VQE model
-        terms_noncon = [op for op in self.ham_tap._dict() if set(op) in [{'I'},{'Z'},{'I','Z'}]]
+        #terms_noncon = greedy_dfs(self.ham_tap._dict(), cutoff=10)[-1]
+        terms_noncon = [op for op in self.ham_tap._dict() if set(op) in [{'I'},{'Z'},{'I', 'Z'}]]
+        for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
+            if 'X' in op or 'Y' in op:
+                terms_noncon.append(op)
+                break
+
         #for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
-        #    distinct_paulis = list(set(op))
-        #    if 'X' in distinct_paulis or 'Y' in distinct_paulis:
-        #        terms_noncon.append(op)
+        #    if 'X' in op or 'Y' in op:
+        #        XY_indices = [i for i,Pi in enumerate(op) if Pi in ['X', 'Y']]
+        #        matchqubit = [op[i] for i in XY_indices]
+        #        complement = list(set(range(len(op)))-set(XY_indices))
         #        break
+        #terms_noncon = []
+        #for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
+        #    XY = [op[i] for i in XY_indices]
+        #    IZ = [op[i] for i in complement]
+        #    if (set(op) in [{'I'},{'Z'},{'I', 'Z'}] or
+        #            ((XY == matchqubit) and
+        #            ('X' not in IZ and 'Y' not in IZ))):
+        #        terms_noncon.append(op)
+
         super().__init__(hamiltonian=self.ham_tap._dict(),
                         noncontextual_set=terms_noncon,
                         ref_state=self.hf_tapered)

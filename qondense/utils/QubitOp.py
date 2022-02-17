@@ -164,7 +164,7 @@ class QubitOp:
             Omega = self.half_symform_csc
         else:
             raise ValueError('Accepted values for sip_type are half or full')
-
+        
         aux_paulis = self.reform(aux_paulis)
         sparse_inner_product = self._symp_csc @ Omega @ aux_paulis._symp_csc.transpose()
         sparse_inner_product.data %= 2 # effects modulo 2 in sparse form
@@ -173,29 +173,29 @@ class QubitOp:
 
 
     def commutes_with(self, 
-            check_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+            aux_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
         ) -> np.array:
         """ Returns an array in which:
         - 0 entries denote commutation and
         - 1 entries denote anticommutation
         """
-        return self.symplectic_inner_product(aux_paulis=check_paulis)
+        return self.symplectic_inner_product(aux_paulis=aux_paulis)
 
     
     def adjacency_matrix(self) -> np.array:
         """ Checks commutation of the represented operator with itself
         """
-        return self.commutes_with(check_paulis=self._symp_csc)
+        return self.commutes_with(aux_paulis=self._symp_csc.toarray())
 
 
     def sign_difference(self, 
-            check_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
+            aux_paulis: Union[str, List[str], Dict[str, float], np.array, "QubitOp"]
         ) -> np.array:
         """ symplectic inner product but with a modified syplectic form.
         This keeps track of sign flips resulting from Pauli multiplication
         but disregards complex phases (we account for this elsewhere).
         """
-        return self.symplectic_inner_product(aux_paulis=check_paulis, sip_type='half')
+        return self.symplectic_inner_product(aux_paulis=aux_paulis, sip_type='half')
 
 
     def phase_modification(self, 

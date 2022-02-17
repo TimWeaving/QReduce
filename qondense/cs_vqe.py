@@ -48,7 +48,7 @@ class cs_vqe(S3_projection):
             self.noncontextual_set = noncontextual_set
         else:
             self.noncontextual_set = self.find_noncontextual_set()
-        self.ham_noncontextual = QubitOp({op:hamiltonian[op] for op in self.noncontextual_set[::-1]})
+        self.ham_noncontextual = QubitOp({op:hamiltonian[op] for op in self.noncontextual_set})
         #self.generators, self.cliquereps = self.independent_generators()
         self.generators, self.cliquereps, construction = quasi_model(self.ham_noncontextual._dict())
         # noncontextual ground state
@@ -113,7 +113,7 @@ class cs_vqe(S3_projection):
         if cliquereps != []:
             # some of the terms in cliquereps can actually belong 
             # to the same clique at this point... pick one!
-            commutation_matrix = QubitOp(cliquereps).adjacency_matrix()
+            commutation_matrix = QubitOp(cliquereps).adjacency_matrix().toarray()
             sort_order = np.lexsort(commutation_matrix.T)
             sorted_comm_mat = commutation_matrix[sort_order,:]
             # take difference between adjacent terms to identify duplicates (i.e. commuting operators)
