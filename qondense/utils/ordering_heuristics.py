@@ -67,12 +67,12 @@ class ordering_heuristics(cs_vqe):
         print(dashes)
 
         # build CS-VQE model
-        #terms_noncon = greedy_dfs(self.ham_tap._dict(), cutoff=10)[-1]
-        terms_noncon = [op for op in self.ham_tap._dict() if set(op) in [{'I'},{'Z'},{'I', 'Z'}]]
-        for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
-            if 'X' in op or 'Y' in op:
-                terms_noncon.append(op)
-                break
+        terms_noncon = greedy_dfs(self.ham_tap._dict(), cutoff=10)[-1]
+        #terms_noncon = [op for op in self.ham_tap._dict() if set(op) in [{'I'},{'Z'},{'I', 'Z'}]]
+        #for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
+        #    if 'X' in op or 'Y' in op:
+        #        terms_noncon.append(op)
+        #        break
 
         #for op, coeff in sorted(self.ham_tap._dict().items(), key=lambda x:-abs(x[1])):
         #    if 'X' in op or 'Y' in op:
